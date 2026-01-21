@@ -1,0 +1,20 @@
+{
+  "C_Cpp.intelliSenseEngine": "default",
+  "idf.espIdfPathWin": "C:\\Users\\Asus M16\\esp\\v5.5.2\\esp-idf",
+  "idf.pythonInstallPath": "c:\\D-Drive\\School\\MSU\\Espressif\\tools\\idf-python\\3.11.2\\python.exe",
+  "idf.openOcdConfigs": [
+    "board/esp32p4-builtin.cfg"
+  ],
+  "idf.portWin": "COM7",
+  "idf.toolsPathWin": "c:\\D-Drive\\School\\MSU\\Espressif",
+  "idf.customExtraVars": {
+    "IDF_TARGET": "esp32p4"
+  },
+  "clangd.path": "c:\\D-Drive\\School\\MSU\\Espressif\\tools\\esp-clang\\esp-19.1.2_20250312\\esp-clang\\bin\\clangd.exe",
+  "clangd.arguments": [
+    "--background-index",
+    "--query-driver=**",
+    "--compile-commands-dir=c:\\D-Drive\\School\\MSU\\Solar Car\\code\\ESP32Stuff\\FIRST_TEST\\build"
+  ],
+  "idf.flashType": "UART"
+}
