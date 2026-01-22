@@ -15,3 +15,5 @@ dependencies:
   #   # All dependencies of `main` are public by default.
   #   public: true
   waveshare/esp_lcd_jd9365_10_1: '*'
+  lvgl/lvgl: '~9.2.0'
+  espressif/esp_lvgl_port: '^2'

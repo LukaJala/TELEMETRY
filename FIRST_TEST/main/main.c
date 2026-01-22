@@ -1,17 +1,18 @@
 /*
- * ESP32-P4 Display Test with JD9365 10.1" LCD
+ * ESP32-P4 Display Test with JD9365 10.1" LCD - Hello World
  */
 
 #include <stdio.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
-#include "freertos/semphr.h"
 #include "driver/gpio.h"
 #include "esp_log.h"
 #include "esp_lcd_panel_ops.h"
 #include "esp_lcd_mipi_dsi.h"
 #include "esp_ldo_regulator.h"
 #include "esp_lcd_jd9365_10_1.h"
+#include "lvgl.h"
+#include "esp_lvgl_port.h"
 
 static const char *TAG = "DISPLAY_TEST";
 
@@ -38,16 +39,6 @@ static const char *TAG = "DISPLAY_TEST";
 #endif
 
 static esp_lcd_panel_handle_t panel_handle = NULL;
-static SemaphoreHandle_t refresh_finish = NULL;
-
-// Callback when color transfer is done
-static bool IRAM_ATTR notify_refresh_ready(esp_lcd_panel_handle_t panel, esp_lcd_dpi_panel_event_data_t *edata, void *user_ctx)
-{
-    SemaphoreHandle_t sem = (SemaphoreHandle_t)user_ctx;
-    BaseType_t need_yield = pdFALSE;
-    xSemaphoreGiveFromISR(sem, &need_yield);
-    return (need_yield == pdTRUE);
-}
 
 void app_main(void)
 {
@@ -110,27 +101,68 @@ void app_main(void)
     ESP_ERROR_CHECK(esp_lcd_panel_init(panel_handle));
     ESP_ERROR_CHECK(esp_lcd_panel_disp_on_off(panel_handle, true));
 
-    // Set up refresh callback
-    refresh_finish = xSemaphoreCreateBinary();
-    esp_lcd_dpi_panel_event_callbacks_t cbs = {
-        .on_color_trans_done = notify_refresh_ready,
-    };
-    ESP_ERROR_CHECK(esp_lcd_dpi_panel_register_event_callbacks(panel_handle, &cbs, refresh_finish));
+    // Initialize LVGL
+    ESP_LOGI(TAG, "Initializing LVGL");
+    const lvgl_port_cfg_t lvgl_cfg = ESP_LVGL_PORT_INIT_CONFIG();
+    ESP_ERROR_CHECK(lvgl_port_init(&lvgl_cfg));
 
-    // Display a test pattern
-    ESP_LOGI(TAG, "Displaying vertical color bar test pattern");
-    ESP_ERROR_CHECK(esp_lcd_dpi_panel_set_pattern(panel_handle, MIPI_DSI_PATTERN_BAR_VERTICAL));
+    // Add display to LVGL
+    ESP_LOGI(TAG, "Adding display to LVGL");
+    const lvgl_port_display_cfg_t disp_cfg = {
+        .panel_handle = panel_handle,
+        .buffer_size = LCD_H_RES * 50,
+        .double_buffer = true,
+        .hres = LCD_H_RES,
+        .vres = LCD_V_RES,
+        .monochrome = false,
+        .color_format = LV_COLOR_FORMAT_RGB888,
+        .rotation = {
+            .swap_xy = false,
+            .mirror_x = false,
+            .mirror_y = false,
+        },
+        .flags = {
+            .buff_dma = false,
+            .buff_spiram = true,
+            .swap_bytes = false,
+            .full_refresh = false,
+            .direct_mode = false,
+            .sw_rotate = true,
+        },
+    };
+    const lvgl_port_display_dsi_cfg_t dsi_cfg = {
+        .flags = {
+            .avoid_tearing = false,
+        },
+    };
+    lv_display_t *disp = lvgl_port_add_disp_dsi(&disp_cfg, &dsi_cfg);
+    if (disp == NULL) {
+        ESP_LOGE(TAG, "Failed to add display to LVGL");
+        return;
+    }
+
+    // Rotate display to landscape mode
+    lv_display_set_rotation(disp, LV_DISPLAY_ROTATION_90);
+
+    // Create Hello World label
+    ESP_LOGI(TAG, "Creating Hello World label");
+    lvgl_port_lock(0);
+
+    lv_obj_t *scr = lv_display_get_screen_active(disp);
+    lv_obj_set_style_bg_color(scr, lv_color_hex(0x003366), LV_PART_MAIN);
+
+    lv_obj_t *label = lv_label_create(scr);
+    lv_label_set_text(label, "MSU Solar Racing Team GOATED");
+    lv_obj_set_style_text_color(label, lv_color_hex(0xFFFFFF), LV_PART_MAIN);
+    lv_obj_set_style_text_font(label, &lv_font_montserrat_48, LV_PART_MAIN);
+    lv_obj_center(label);
+
+    lvgl_port_unlock();
 
     ESP_LOGI(TAG, "Display initialized successfully!");
 
-    // Main loop - cycle through test patterns
+    // Main loop - LVGL handles updates automatically via esp_lvgl_port
     while (1) {
-        vTaskDelay(pdMS_TO_TICKS(3000));
-        ESP_LOGI(TAG, "Switching to horizontal bars");
-        ESP_ERROR_CHECK(esp_lcd_dpi_panel_set_pattern(panel_handle, MIPI_DSI_PATTERN_BAR_HORIZONTAL));
-
-        vTaskDelay(pdMS_TO_TICKS(3000));
-        ESP_LOGI(TAG, "Switching to vertical bars");
-        ESP_ERROR_CHECK(esp_lcd_dpi_panel_set_pattern(panel_handle, MIPI_DSI_PATTERN_BAR_VERTICAL));
+        vTaskDelay(pdMS_TO_TICKS(1000));
     }
 }
