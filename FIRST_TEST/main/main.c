@@ -22,12 +22,13 @@ void app_main(void)
     lv_display_t *disp = lvgl_port_add_disp_dsi(
         &(lvgl_port_display_cfg_t){
             .panel_handle = panel,
-            .buffer_size = LCD_H_RES * 50,
-            .double_buffer = true,
+            .buffer_size = LCD_H_RES * LCD_V_RES * 3,  // Full frame buffer for rotation
+            .double_buffer = false,
             .hres = LCD_H_RES,
             .vres = LCD_V_RES,
             .color_format = LV_COLOR_FORMAT_RGB888,
             .flags.buff_spiram = true,
+            .flags.sw_rotate = true,
         },
         &(lvgl_port_display_dsi_cfg_t){});
 

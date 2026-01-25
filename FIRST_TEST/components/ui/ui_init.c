@@ -31,7 +31,7 @@ void ui_init(lv_display_t *disp)
     lv_label_set_text(label, "MSU Solar Racing Team\nGOATED");
     lv_obj_set_style_text_color(label, lv_color_white(), LV_PART_MAIN);
     lv_obj_set_style_text_font(label, &lv_font_montserrat_48, LV_PART_MAIN);
-    lv_label_set_align(label, LV_TEXT_ALIGN_CENTER);
+    lv_obj_set_style_text_align(label, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
     lv_obj_center(label);
 
     lvgl_port_unlock();
