@@ -16,5 +16,6 @@
     "--query-driver=**",
     "--compile-commands-dir=c:\\D-Drive\\School\\MSU\\Solar Car\\code\\ESP32Stuff\\FIRST_TEST\\build"
   ],
-  "idf.flashType": "UART"
+  "idf.flashType": "UART",
+  "idf.currentSetup": "C:\\Users\\Asus M16\\esp\\v5.5.2\\esp-idf"
 }

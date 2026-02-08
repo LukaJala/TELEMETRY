@@ -1,0 +1,17 @@
+{
+  "idf.openOcdConfigs": [
+    "board/esp32p4-builtin.cfg"
+  ],
+  "idf.customExtraVars": {
+    "IDF_TARGET": "esp32p4"
+  },
+  "clangd.path": "c:\\D-Drive\\School\\MSU\\Espressif\\tools\\esp-clang\\esp-19.1.2_20250312\\esp-clang\\bin\\clangd.exe",
+  "clangd.arguments": [
+    "--background-index",
+    "--query-driver=**",
+    "--compile-commands-dir=c:\\D-Drive\\School\\MSU\\Solar Car\\code\\ESP32Stuff\\ReceiveTest\\build"
+],
+"idf.flashType": "UART",
+"idf.portWin": "COM7",
+"idf.currentSetup": "C:\\Users\\Asus M16\\esp\\v5.5.2\\esp-idf"
+}

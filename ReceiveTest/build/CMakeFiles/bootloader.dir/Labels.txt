@@ -1,0 +1,13 @@
+# Target labels
+ bootloader
+# Source files and their labels
+C:/D-Drive/School/MSU/Solar Car/code/ESP32Stuff/ReceiveTest/build/CMakeFiles/bootloader
+C:/D-Drive/School/MSU/Solar Car/code/ESP32Stuff/ReceiveTest/build/CMakeFiles/bootloader.rule
+C:/D-Drive/School/MSU/Solar Car/code/ESP32Stuff/ReceiveTest/build/CMakeFiles/bootloader-complete.rule
+C:/D-Drive/School/MSU/Solar Car/code/ESP32Stuff/ReceiveTest/build/bootloader-prefix/src/bootloader-stamp/bootloader-build.rule
+C:/D-Drive/School/MSU/Solar Car/code/ESP32Stuff/ReceiveTest/build/bootloader-prefix/src/bootloader-stamp/bootloader-configure.rule
+C:/D-Drive/School/MSU/Solar Car/code/ESP32Stuff/ReceiveTest/build/bootloader-prefix/src/bootloader-stamp/bootloader-download.rule
+C:/D-Drive/School/MSU/Solar Car/code/ESP32Stuff/ReceiveTest/build/bootloader-prefix/src/bootloader-stamp/bootloader-install.rule
+C:/D-Drive/School/MSU/Solar Car/code/ESP32Stuff/ReceiveTest/build/bootloader-prefix/src/bootloader-stamp/bootloader-mkdir.rule
+C:/D-Drive/School/MSU/Solar Car/code/ESP32Stuff/ReceiveTest/build/bootloader-prefix/src/bootloader-stamp/bootloader-patch.rule
+C:/D-Drive/School/MSU/Solar Car/code/ESP32Stuff/ReceiveTest/build/bootloader-prefix/src/bootloader-stamp/bootloader-update.rule
