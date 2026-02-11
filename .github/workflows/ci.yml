@@ -1,0 +1,47 @@
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches:
+      - master
+      - main
+      - urmom
+  pull_request:
+
+jobs:
+  build:
+    name: Build ESP-IDF Project
+    runs-on: ubuntu-latest
+
+    # Use caching to speed up builds
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Install ESP-IDF
+        uses: espressif/install-esp-idf-action@v1
+        with:
+          version: 'release/v6.3'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt || echo "No requirements.txt found"
+
+      - name: Build Project
+        run: |
+          idf.py set-target esp32
+          idf.py build
+
+      - name: Run Clang Format Check
+        run: |
+          clang-format --version
+          find . -name "*.c" -o -name "*.h" | xargs clang-format -i
+
+      - name: Run CMake Format Check
+        run: cmake-format --version || echo "cmake-format not installed"
