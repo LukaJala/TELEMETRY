@@ -2,7 +2,7 @@ name: CI Build ESP‑IDF
 
 on:
   push:
-    branches: [ "main", "feature/**" ]
+    branches: [ "master", "feature/**" ]
   pull_request:
 
 jobs:
