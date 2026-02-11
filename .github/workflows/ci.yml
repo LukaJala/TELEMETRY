@@ -15,12 +15,12 @@ jobs:
         with:
           submodules: 'recursive'
 
-      - name: Build using ESP‑IDF CI action
-        uses: espressif/esp-idf-ci-action@v1
-        with:
-          path: "FIRST_TEST"                
-          esp_idf_version: "release/v6.3"     
-          target: "esp32"                
+      - name: ESP-IDF Project Build
+        uses: rmshub/esp-idf-action@v6
+        # with:
+        #   path: "FIRST_TEST"                
+        #   esp_idf_version: "release/v6.3"     
+        #   target: "esp32"                
 
       - name: Upload firmware artifacts
         uses: actions/upload-artifact@v4
