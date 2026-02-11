@@ -18,7 +18,7 @@ jobs:
       - name: Build using ESP‑IDF CI action
         uses: espressif/esp-idf-ci-action@v1
         with:
-          path: FIRST_TEST                  
+          path: "FIRST_TEST"                
           esp_idf_version: "release/v6.3"     
           target: "esp32"                
 
