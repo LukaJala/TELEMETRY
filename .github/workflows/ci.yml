@@ -19,7 +19,7 @@ jobs:
         uses: espressif/esp-idf-ci-action@v1
         with:
           path: "FIRST_TEST"                     
-          esp_idf_version: "latest"     
+          esp_idf_version: "release/v6.3"     
           target: "esp32"                
 
       - name: Upload firmware artifacts
