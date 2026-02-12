@@ -2,5 +2,6 @@
 	"idf.openOcdConfigs": [
 		"board/esp32p4-builtin.cfg"
 	],
-	"idf.portWin": "COM7"
+	"idf.portWin": "COM7",
+	"cmake.sourceDirectory": "C:/Users/ishan/TELEMETRY/FIRST_TEST"
 }
