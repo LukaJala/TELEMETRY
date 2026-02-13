@@ -26,61 +26,100 @@ void ui_init(lv_display_t *disp)
         Make screen use flex column layout
     */
     lv_obj_set_layout(scr, LV_LAYOUT_FLEX);
-    lv_obj_set_flex_flow(scr, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_flex_flow(scr, LV_FLEX_FLOW_ROW);
 
     // Remove default padding
     lv_obj_set_style_pad_all(scr, 0, 0);
+    lv_obj_set_style_pad_column(scr, 0, 0);
+    lv_obj_set_style_pad_row(scr, 0, 0);
 
-    /**
-        Top Container
-    */
-    lv_obj_t *top_cont = lv_obj_create(scr);
-    lv_obj_set_size(top_cont, LV_PCT(100), LV_PCT(50));
+    // Create containers
+    lv_obj_t *left_cont = lv_obj_create(scr);
+    lv_obj_t *mid_cont = lv_obj_create(scr);
+    lv_obj_t *right_cont = lv_obj_create(scr);
 
-    lv_obj_set_style_bg_color(top_cont, lv_color_hex(0x001F3f), 0);
-    lv_obj_set_style_border_width(top_cont, 0, 0);
+    // Update size and fill percent
+    lv_obj_set_size(left_cont, LV_PCT(100), LV_PCT(100));
+    lv_obj_set_size(mid_cont, LV_PCT(100), LV_PCT(100));
+    lv_obj_set_size(right_cont, LV_PCT(100), LV_PCT(100));
 
-    /* Center content inside top container */
-    lv_obj_set_layout(top_cont, LV_LAYOUT_FLEX);
-    lv_obj_set_flex_flow(top_cont, LV_FLEX_FLOW_COLUMN);
-    lv_obj_set_flex_align(top_cont,
+    lv_obj_set_flex_grow(left_cont, 1);
+    lv_obj_set_flex_grow(mid_cont, 2);
+    lv_obj_set_flex_grow(right_cont, 1);
+
+
+    // Update colors and border 
+    lv_obj_set_style_bg_color(left_cont, lv_color_hex(0x001F3f), 0);
+    lv_obj_set_style_border_width(left_cont, 0, 0);
+
+    lv_obj_set_style_bg_color(mid_cont, lv_color_hex(0x551122), 0);
+    lv_obj_set_style_border_width(mid_cont, 0, 0);
+
+    lv_obj_set_style_bg_color(right_cont, lv_color_hex(0x003366), 0);
+    lv_obj_set_style_border_width(right_cont, 0, 0);
+
+    
+
+    // Center the content of the containers
+    lv_obj_set_layout(left_cont, LV_LAYOUT_FLEX);
+    lv_obj_set_flex_flow(left_cont, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(left_cont,
+                        LV_FLEX_ALIGN_CENTER,
+                        LV_FLEX_ALIGN_CENTER,
+                        LV_FLEX_ALIGN_CENTER);
+
+    lv_obj_set_layout(mid_cont, LV_LAYOUT_FLEX);
+    lv_obj_set_flex_flow(mid_cont, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(mid_cont,
+                        LV_FLEX_ALIGN_CENTER,
+                        LV_FLEX_ALIGN_CENTER,
+                        LV_FLEX_ALIGN_CENTER);
+
+    lv_obj_set_layout(right_cont, LV_LAYOUT_FLEX);
+    lv_obj_set_flex_flow(right_cont, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(right_cont,
                         LV_FLEX_ALIGN_CENTER,
                         LV_FLEX_ALIGN_CENTER,
                         LV_FLEX_ALIGN_CENTER);
 
     /* Add title to top half */
-    lv_obj_t *title = lv_label_create(top_cont);
+    lv_obj_t *title = lv_label_create(left_cont);
     lv_label_set_text(title, "The data being sent is:");
     lv_obj_set_style_text_color(title, lv_color_white(), 0);
     lv_obj_set_style_text_font(title, &lv_font_montserrat_32, 0);
 
-    /* --------------------------------------------------------
-    * BOTTOM CONTAINER (50% of screen)
-    * -------------------------------------------------------- */
-    lv_obj_t *bottom_cont = lv_obj_create(scr);
-    lv_obj_set_size(bottom_cont, LV_PCT(100), LV_PCT(50));
+    // Center spedometer arc
+    lv_obj_t *arc = lv_arc_create(mid_cont);
 
-    lv_obj_set_style_bg_color(bottom_cont, lv_color_hex(0x003366), 0);
-    lv_obj_set_style_border_width(bottom_cont, 0, 0);
+    lv_obj_set_size(arc, 220, 220);
+    lv_obj_center(arc);
+
+    // Range of arc
+    lv_arc_set_range(arc, 0, 100);
+    lv_arc_set_value(arc, 65);
+
+    // Start and end angles
+    lv_arc_set_bg_angles(arc, 135, 405);   // 270° sweep
+    lv_arc_set_rotation(arc, 0);
+
+    // Remove knob
+    lv_obj_remove_style(arc, NULL, LV_PART_KNOB);
+
+    
 
     /* Center content */
-    lv_obj_set_layout(bottom_cont, LV_LAYOUT_FLEX);
-    lv_obj_set_flex_flow(bottom_cont, LV_FLEX_FLOW_COLUMN);
-    lv_obj_set_flex_align(bottom_cont,
-                        LV_FLEX_ALIGN_CENTER,
-                        LV_FLEX_ALIGN_CENTER,
-                        LV_FLEX_ALIGN_CENTER);
+    
                         
 
      /* Data label (big green text) */
-    data_label = lv_label_create(bottom_cont);
+    data_label = lv_label_create(right_cont);
     lv_label_set_text(data_label, "Waiting...");
     lv_obj_set_style_text_color(data_label, lv_color_hex(0x00FF00), 0);
     lv_obj_set_style_text_font(data_label, &lv_font_montserrat_48, 0);
     lv_obj_set_style_text_align(data_label, LV_TEXT_ALIGN_CENTER, 0);
 
     /* Status label under data */
-    status_label = lv_label_create(bottom_cont);
+    status_label = lv_label_create(right_cont);
     lv_label_set_text(status_label, "Initializing network...");
     lv_obj_set_style_text_color(status_label, lv_color_hex(0xAAAAAA), 0);
     lv_obj_set_style_text_font(status_label, &lv_font_montserrat_24, 0);
