@@ -13,6 +13,7 @@
 static lv_obj_t *data_label = NULL;    /* Main data display (time, number, text) */
 static lv_obj_t *status_label = NULL;  /* Status line at bottom (IP address) */
 
+
 void ui_init(lv_display_t *disp)
 {
     /* Lock LVGL - required before any UI changes */
@@ -21,44 +22,72 @@ void ui_init(lv_display_t *disp)
     /* Get the active screen (root container) */
     lv_obj_t *scr = lv_display_get_screen_active(disp);
 
-    /* --------------------------------------------------------
-     * Background - dark blue
-     * -------------------------------------------------------- */
-    lv_obj_set_style_bg_color(scr, lv_color_hex(0x003366), LV_PART_MAIN);
-    lv_obj_set_style_bg_opa(scr, LV_OPA_COVER, LV_PART_MAIN);
+    /**
+        Make screen use flex column layout
+    */
+    lv_obj_set_layout(scr, LV_LAYOUT_FLEX);
+    lv_obj_set_flex_flow(scr, LV_FLEX_FLOW_COLUMN);
 
-    /* --------------------------------------------------------
-     * Title label - "The data being sent is:"
-     * White text, 32px, centered near top
-     * -------------------------------------------------------- */
-    lv_obj_t *title = lv_label_create(scr);
+    // Remove default padding
+    lv_obj_set_style_pad_all(scr, 0, 0);
+
+    /**
+        Top Container
+    */
+    lv_obj_t *top_cont = lv_obj_create(scr);
+    lv_obj_set_size(top_cont, LV_PCT(100), LV_PCT(50));
+
+    lv_obj_set_style_bg_color(top_cont, lv_color_hex(0x001F3f), 0);
+    lv_obj_set_style_border_width(top_cont, 0, 0);
+
+    /* Center content inside top container */
+    lv_obj_set_layout(top_cont, LV_LAYOUT_FLEX);
+    lv_obj_set_flex_flow(top_cont, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_flex_align(top_cont,
+                        LV_FLEX_ALIGN_CENTER,
+                        LV_FLEX_ALIGN_CENTER,
+                        LV_FLEX_ALIGN_CENTER);
+
+    /* Add title to top half */
+    lv_obj_t *title = lv_label_create(top_cont);
     lv_label_set_text(title, "The data being sent is:");
-    lv_obj_set_style_text_color(title, lv_color_white(), LV_PART_MAIN);
-    lv_obj_set_style_text_font(title, &lv_font_montserrat_32, LV_PART_MAIN);
-    lv_obj_align(title, LV_ALIGN_CENTER, 0, -100);
+    lv_obj_set_style_text_color(title, lv_color_white(), 0);
+    lv_obj_set_style_text_font(title, &lv_font_montserrat_32, 0);
 
     /* --------------------------------------------------------
-     * Data label - shows the actual data (time, number, text)
-     * Green text, 48px, centered
-     * -------------------------------------------------------- */
-    data_label = lv_label_create(scr);
+    * BOTTOM CONTAINER (50% of screen)
+    * -------------------------------------------------------- */
+    lv_obj_t *bottom_cont = lv_obj_create(scr);
+    lv_obj_set_size(bottom_cont, LV_PCT(100), LV_PCT(50));
+
+    lv_obj_set_style_bg_color(bottom_cont, lv_color_hex(0x003366), 0);
+    lv_obj_set_style_border_width(bottom_cont, 0, 0);
+
+    /* Center content */
+    lv_obj_set_layout(bottom_cont, LV_LAYOUT_FLEX);
+    lv_obj_set_flex_flow(bottom_cont, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_flex_align(bottom_cont,
+                        LV_FLEX_ALIGN_CENTER,
+                        LV_FLEX_ALIGN_CENTER,
+                        LV_FLEX_ALIGN_CENTER);
+                        
+
+     /* Data label (big green text) */
+    data_label = lv_label_create(bottom_cont);
     lv_label_set_text(data_label, "Waiting...");
-    lv_obj_set_style_text_color(data_label, lv_color_hex(0x00FF00), LV_PART_MAIN);
-    lv_obj_set_style_text_font(data_label, &lv_font_montserrat_48, LV_PART_MAIN);
-    lv_obj_set_style_text_align(data_label, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
-    lv_obj_align(data_label, LV_ALIGN_CENTER, 0, 0);
+    lv_obj_set_style_text_color(data_label, lv_color_hex(0x00FF00), 0);
+    lv_obj_set_style_text_font(data_label, &lv_font_montserrat_48, 0);
+    lv_obj_set_style_text_align(data_label, LV_TEXT_ALIGN_CENTER, 0);
+
+    /* Status label under data */
+    status_label = lv_label_create(bottom_cont);
+    lv_label_set_text(status_label, "Initializing network...");
+    lv_obj_set_style_text_color(status_label, lv_color_hex(0xAAAAAA), 0);
+    lv_obj_set_style_text_font(status_label, &lv_font_montserrat_24, 0);
 
     /* --------------------------------------------------------
-     * Status label - shows IP address and connection info
-     * Gray text, 24px, bottom of screen
+     * Unlock LVGL so it can render
      * -------------------------------------------------------- */
-    status_label = lv_label_create(scr);
-    lv_label_set_text(status_label, "Initializing network...");
-    lv_obj_set_style_text_color(status_label, lv_color_hex(0xAAAAAA), LV_PART_MAIN);
-    lv_obj_set_style_text_font(status_label, &lv_font_montserrat_24, LV_PART_MAIN);
-    lv_obj_align(status_label, LV_ALIGN_BOTTOM_MID, 0, -30);
-
-    /* Unlock LVGL - let background task render */
     lvgl_port_unlock();
 }
 

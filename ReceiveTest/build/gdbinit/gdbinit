@@ -1,2 +1,2 @@
-source C:/D-Drive/School/MSU/Solar Car/code/ESP32Stuff/ReceiveTest/build/gdbinit/symbols
-source C:/D-Drive/School/MSU/Solar Car/code/ESP32Stuff/ReceiveTest/build/gdbinit/connect
+source C:/Coding/Solar Car/TELEMETRY/ReceiveTest/build/gdbinit/symbols
+source C:/Coding/Solar Car/TELEMETRY/ReceiveTest/build/gdbinit/connect

@@ -1,4 +1,4 @@
-# Install script for directory: C:/Users/Asus M16/esp/v5.5.2/esp-idf/components/esp_psram
+# Install script for directory: C:/Users/micha/esp/v5.5.2/esp-idf/components/esp_psram
 
 # Set the install prefix
 if(NOT DEFINED CMAKE_INSTALL_PREFIX)
@@ -34,16 +34,16 @@ endif()
 
 # Set path to fallback-tool for dependency-resolution.
 if(NOT DEFINED CMAKE_OBJDUMP)
-  set(CMAKE_OBJDUMP "C:/D-Drive/School/MSU/Espressif/tools/riscv32-esp-elf/esp-14.2.0_20251107/riscv32-esp-elf/bin/riscv32-esp-elf-objdump.exe")
+  set(CMAKE_OBJDUMP "C:/Users/micha/.espressif/tools/riscv32-esp-elf/esp-14.2.0_20251107/riscv32-esp-elf/bin/riscv32-esp-elf-objdump.exe")
 endif()
 
 if(NOT CMAKE_INSTALL_LOCAL_ONLY)
   # Include the install script for the subdirectory.
-  include("C:/D-Drive/School/MSU/Solar Car/code/ESP32Stuff/ReceiveTest/build/esp-idf/esp_psram/device/cmake_install.cmake")
+  include("C:/Coding/Solar Car/TELEMETRY/ReceiveTest/build/esp-idf/esp_psram/device/cmake_install.cmake")
 endif()
 
 if(NOT CMAKE_INSTALL_LOCAL_ONLY)
   # Include the install script for the subdirectory.
-  include("C:/D-Drive/School/MSU/Solar Car/code/ESP32Stuff/ReceiveTest/build/esp-idf/esp_psram/xip_impl/cmake_install.cmake")
+  include("C:/Coding/Solar Car/TELEMETRY/ReceiveTest/build/esp-idf/esp_psram/xip_impl/cmake_install.cmake")
 endif()
 

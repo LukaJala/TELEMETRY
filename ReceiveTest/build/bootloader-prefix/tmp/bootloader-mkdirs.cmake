@@ -6,22 +6,22 @@ cmake_minimum_required(VERSION 3.5)
 # If CMAKE_DISABLE_SOURCE_CHANGES is set to true and the source directory is an
 # existing directory in our source tree, calling file(MAKE_DIRECTORY) on it
 # would cause a fatal error, even though it would be a no-op.
-if(NOT EXISTS "C:/Users/Asus M16/esp/v5.5.2/esp-idf/components/bootloader/subproject")
-  file(MAKE_DIRECTORY "C:/Users/Asus M16/esp/v5.5.2/esp-idf/components/bootloader/subproject")
+if(NOT EXISTS "C:/Users/micha/esp/v5.5.2/esp-idf/components/bootloader/subproject")
+  file(MAKE_DIRECTORY "C:/Users/micha/esp/v5.5.2/esp-idf/components/bootloader/subproject")
 endif()
 file(MAKE_DIRECTORY
-  "C:/D-Drive/School/MSU/Solar Car/code/ESP32Stuff/ReceiveTest/build/bootloader"
-  "C:/D-Drive/School/MSU/Solar Car/code/ESP32Stuff/ReceiveTest/build/bootloader-prefix"
-  "C:/D-Drive/School/MSU/Solar Car/code/ESP32Stuff/ReceiveTest/build/bootloader-prefix/tmp"
-  "C:/D-Drive/School/MSU/Solar Car/code/ESP32Stuff/ReceiveTest/build/bootloader-prefix/src/bootloader-stamp"
-  "C:/D-Drive/School/MSU/Solar Car/code/ESP32Stuff/ReceiveTest/build/bootloader-prefix/src"
-  "C:/D-Drive/School/MSU/Solar Car/code/ESP32Stuff/ReceiveTest/build/bootloader-prefix/src/bootloader-stamp"
+  "C:/Coding/Solar Car/TELEMETRY/ReceiveTest/build/bootloader"
+  "C:/Coding/Solar Car/TELEMETRY/ReceiveTest/build/bootloader-prefix"
+  "C:/Coding/Solar Car/TELEMETRY/ReceiveTest/build/bootloader-prefix/tmp"
+  "C:/Coding/Solar Car/TELEMETRY/ReceiveTest/build/bootloader-prefix/src/bootloader-stamp"
+  "C:/Coding/Solar Car/TELEMETRY/ReceiveTest/build/bootloader-prefix/src"
+  "C:/Coding/Solar Car/TELEMETRY/ReceiveTest/build/bootloader-prefix/src/bootloader-stamp"
 )
 
 set(configSubDirs )
 foreach(subDir IN LISTS configSubDirs)
-    file(MAKE_DIRECTORY "C:/D-Drive/School/MSU/Solar Car/code/ESP32Stuff/ReceiveTest/build/bootloader-prefix/src/bootloader-stamp/${subDir}")
+    file(MAKE_DIRECTORY "C:/Coding/Solar Car/TELEMETRY/ReceiveTest/build/bootloader-prefix/src/bootloader-stamp/${subDir}")
 endforeach()
 if(cfgdir)
-  file(MAKE_DIRECTORY "C:/D-Drive/School/MSU/Solar Car/code/ESP32Stuff/ReceiveTest/build/bootloader-prefix/src/bootloader-stamp${cfgdir}") # cfgdir has leading slash
+  file(MAKE_DIRECTORY "C:/Coding/Solar Car/TELEMETRY/ReceiveTest/build/bootloader-prefix/src/bootloader-stamp${cfgdir}") # cfgdir has leading slash
 endif()

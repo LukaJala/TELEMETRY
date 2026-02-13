@@ -1,4 +1,4 @@
-/* * Data converted from C:/D-Drive/School/MSU/Solar Car/code/ESP32Stuff/ReceiveTest/build/esp-idf/mbedtls/x509_crt_bundle
+/* * Data converted from C:/Coding/Solar Car/TELEMETRY/ReceiveTest/build/esp-idf/mbedtls/x509_crt_bundle
  */
 .data
 #if !defined (__APPLE__) && !defined (__linux__)

@@ -12,6 +12,6 @@
     "--compile-commands-dir=c:\\D-Drive\\School\\MSU\\Solar Car\\code\\ESP32Stuff\\ReceiveTest\\build"
 ],
 "idf.flashType": "UART",
-"idf.portWin": "COM7",
-"idf.currentSetup": "C:\\Users\\Asus M16\\esp\\v5.5.2\\esp-idf"
+"idf.portWin": "COM4",
+"idf.currentSetup": "C:\\Users\\micha\\esp\\v5.5.2\\esp-idf"
 }

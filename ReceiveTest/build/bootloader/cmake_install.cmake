@@ -1,4 +1,4 @@
-# Install script for directory: C:/Users/Asus M16/esp/v5.5.2/esp-idf/components/bootloader/subproject
+# Install script for directory: C:/Users/micha/esp/v5.5.2/esp-idf/components/bootloader/subproject
 
 # Set the install prefix
 if(NOT DEFINED CMAKE_INSTALL_PREFIX)
@@ -34,12 +34,12 @@ endif()
 
 # Set path to fallback-tool for dependency-resolution.
 if(NOT DEFINED CMAKE_OBJDUMP)
-  set(CMAKE_OBJDUMP "C:/D-Drive/School/MSU/Espressif/tools/riscv32-esp-elf/esp-14.2.0_20251107/riscv32-esp-elf/bin/riscv32-esp-elf-objdump.exe")
+  set(CMAKE_OBJDUMP "C:/Users/micha/.espressif/tools/riscv32-esp-elf/esp-14.2.0_20251107/riscv32-esp-elf/bin/riscv32-esp-elf-objdump.exe")
 endif()
 
 if(NOT CMAKE_INSTALL_LOCAL_ONLY)
   # Include the install script for the subdirectory.
-  include("C:/D-Drive/School/MSU/Solar Car/code/ESP32Stuff/ReceiveTest/build/bootloader/esp-idf/cmake_install.cmake")
+  include("C:/Coding/Solar Car/TELEMETRY/ReceiveTest/build/bootloader/esp-idf/cmake_install.cmake")
 endif()
 
 if(CMAKE_INSTALL_COMPONENT)
@@ -57,6 +57,6 @@ endif()
 if(NOT CMAKE_INSTALL_LOCAL_ONLY)
   string(REPLACE ";" "\n" CMAKE_INSTALL_MANIFEST_CONTENT
        "${CMAKE_INSTALL_MANIFEST_FILES}")
-  file(WRITE "C:/D-Drive/School/MSU/Solar Car/code/ESP32Stuff/ReceiveTest/build/bootloader/${CMAKE_INSTALL_MANIFEST}"
+  file(WRITE "C:/Coding/Solar Car/TELEMETRY/ReceiveTest/build/bootloader/${CMAKE_INSTALL_MANIFEST}"
      "${CMAKE_INSTALL_MANIFEST_CONTENT}")
 endif()
