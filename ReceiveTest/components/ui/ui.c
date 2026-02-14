@@ -13,9 +13,28 @@
 static lv_obj_t *data_label = NULL;    /* Main data display (time, number, text) */
 static lv_obj_t *status_label = NULL;  /* Status line at bottom (IP address) */
 
+/* Static bound values */
+static lv_subject_t speed_value;
+
+static lv_color_t pine_green;
+static lv_color_t hunter_green;
+static lv_color_t green;
+static lv_color_t sage_green;
+static lv_color_t dust;
+
+void colors_init()
+{
+    pine_green = lv_color_hex(0x344e41);
+    hunter_green = lv_color_hex(0x3a5a40);
+    green = lv_color_hex(0x588157);
+    sage_green = lv_color_hex(0xa3b18a);
+    dust = lv_color_hex(0xdad7cd);
+}
 
 void ui_init(lv_display_t *disp)
 {
+    colors_init();
+
     /* Lock LVGL - required before any UI changes */
     lvgl_port_lock(0);
 
@@ -49,13 +68,13 @@ void ui_init(lv_display_t *disp)
 
 
     // Update colors and border 
-    lv_obj_set_style_bg_color(left_cont, lv_color_hex(0x001F3f), 0);
+    lv_obj_set_style_bg_color(left_cont, sage_green, 0);
     lv_obj_set_style_border_width(left_cont, 0, 0);
 
-    lv_obj_set_style_bg_color(mid_cont, lv_color_hex(0x551122), 0);
+    lv_obj_set_style_bg_color(mid_cont, pine_green, 0);
     lv_obj_set_style_border_width(mid_cont, 0, 0);
 
-    lv_obj_set_style_bg_color(right_cont, lv_color_hex(0x003366), 0);
+    lv_obj_set_style_bg_color(right_cont, sage_green, 0);
     lv_obj_set_style_border_width(right_cont, 0, 0);
 
     
@@ -88,28 +107,48 @@ void ui_init(lv_display_t *disp)
     lv_obj_set_style_text_color(title, lv_color_white(), 0);
     lv_obj_set_style_text_font(title, &lv_font_montserrat_32, 0);
 
+    // Init speed value
+    lv_subject_init_int(&speed_value, 30);
+
     // Center spedometer arc
     lv_obj_t *arc = lv_arc_create(mid_cont);
 
-    lv_obj_set_size(arc, 220, 220);
+    lv_obj_set_size(arc, 400, 400);
     lv_obj_center(arc);
+    
 
     // Range of arc
     lv_arc_set_range(arc, 0, 100);
     lv_arc_set_value(arc, 65);
+    lv_arc_bind_value(arc, &speed_value);
 
     // Start and end angles
     lv_arc_set_bg_angles(arc, 135, 405);   // 270° sweep
     lv_arc_set_rotation(arc, 0);
 
+    // Setting colors
+    lv_obj_set_style_bg_color(arc, dust, LV_PART_MAIN);
+    lv_obj_set_style_arc_color(arc, green, LV_PART_INDICATOR);
+    // setting width of arc
+    lv_obj_set_style_arc_width(arc, 40, LV_PART_MAIN);        
+    lv_obj_set_style_arc_width(arc, 40, LV_PART_INDICATOR);
+
     // Remove knob
     lv_obj_remove_style(arc, NULL, LV_PART_KNOB);
 
-    
+    // spedometer speed
+    lv_obj_t *speed_label = lv_label_create(arc);
+    lv_obj_set_size(speed_label, 300, 300);
+    lv_obj_center(speed_label);
 
-    /* Center content */
+    // Text formatting
+    lv_obj_set_style_text_color(speed_label, lv_color_white(), 0);
+    lv_obj_set_style_text_font(speed_label, &lv_font_montserrat_48, 0);
+    lv_obj_set_style_text_align(speed_label, LV_TEXT_ALIGN_CENTER, 0);
+
+    // Bind value to label
+    lv_label_bind_text(speed_label, &speed_value, "%d MPH");
     
-                        
 
      /* Data label (big green text) */
     data_label = lv_label_create(right_cont);
@@ -127,6 +166,14 @@ void ui_init(lv_display_t *disp)
     /* --------------------------------------------------------
      * Unlock LVGL so it can render
      * -------------------------------------------------------- */
+    lvgl_port_unlock();
+}
+
+void ui_set_data(const int speed)
+{
+    /* Lock, update, unlock */
+    lvgl_port_lock(0);
+    //speed_value = speed
     lvgl_port_unlock();
 }
 

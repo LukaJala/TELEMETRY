@@ -1,7 +1,7 @@
 {
     "version":            "1.2",
     "project_name":       "ReceiveTest",
-    "project_version":    "fffe550-dirty",
+    "project_version":    "e8e4dff-dirty",
     "project_path":       "C:/Coding/Solar Car/TELEMETRY/ReceiveTest",
     "idf_path":           "C:/Users/micha/esp/v5.5.2/esp-idf",
     "build_dir":          "C:/Coding/Solar Car/TELEMETRY/ReceiveTest/build",
