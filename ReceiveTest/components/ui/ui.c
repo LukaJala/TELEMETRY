@@ -22,6 +22,27 @@ static lv_color_t green;
 static lv_color_t sage_green;
 static lv_color_t dust;
 
+/* TIMER TESTING */
+static lv_timer_t *speed_ramp_timer = NULL;
+static int ramp_value = 0;
+
+static void speed_ramp_cb(lv_timer_t *t)
+{
+    (void)t;
+
+    ramp_value++;
+
+    // Update the bound subject (updates arc + label automatically)
+    lv_subject_set_int(&speed_value, ramp_value);
+
+    if(ramp_value >= 100) {
+        lv_timer_del(speed_ramp_timer);
+        speed_ramp_timer = NULL;
+    }
+}
+
+/* END TIMER TESTING*/
+
 void colors_init()
 {
     pine_green = lv_color_hex(0x344e41);
@@ -108,13 +129,24 @@ void ui_init(lv_display_t *disp)
     lv_obj_set_style_text_font(title, &lv_font_montserrat_32, 0);
 
     // Init speed value
-    lv_subject_init_int(&speed_value, 30);
+    lv_subject_init_int(&speed_value, 0);
+
+    /* TIMER TESTING*/
+    ramp_value = 0;
+    if(speed_ramp_timer) {
+        lv_timer_del(speed_ramp_timer);
+        speed_ramp_timer = NULL;
+    }
+
+    // 100 ms period => 100 ticks in 10 seconds
+    speed_ramp_timer = lv_timer_create(speed_ramp_cb, 100, NULL);
+    /* END TIMER TESTING */
 
     // Center spedometer arc
     lv_obj_t *arc = lv_arc_create(mid_cont);
 
     lv_obj_set_size(arc, 400, 400);
-    lv_obj_center(arc);
+    lv_obj_set_style_margin_top(arc, -300, LV_PART_MAIN | LV_STATE_DEFAULT);
     
 
     // Range of arc
@@ -136,17 +168,26 @@ void ui_init(lv_display_t *disp)
     // Remove knob
     lv_obj_remove_style(arc, NULL, LV_PART_KNOB);
 
-    // spedometer speed
-    lv_obj_t *speed_label = lv_label_create(arc);
-    lv_obj_set_size(speed_label, 300, 300);
-    lv_obj_center(speed_label);
+    // Create a container in the middle of the arc
+    lv_obj_t *center_box = lv_obj_create(arc);
+    lv_obj_remove_style_all(center_box);
+    lv_obj_set_size(center_box, LV_PCT(100), LV_PCT(100));
+    lv_obj_center(center_box);
 
-    // Text formatting
+    // Use flex to center contents (true center)
+    lv_obj_set_layout(center_box, LV_LAYOUT_FLEX);
+    lv_obj_set_flex_flow(center_box, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_flex_align(center_box,
+                        LV_FLEX_ALIGN_CENTER,   // main axis
+                        LV_FLEX_ALIGN_CENTER,   // cross axis
+                        LV_FLEX_ALIGN_CENTER);  // track
+
+    // Put label inside that box
+    lv_obj_t *speed_label = lv_label_create(center_box);
     lv_obj_set_style_text_color(speed_label, lv_color_white(), 0);
     lv_obj_set_style_text_font(speed_label, &lv_font_montserrat_48, 0);
     lv_obj_set_style_text_align(speed_label, LV_TEXT_ALIGN_CENTER, 0);
 
-    // Bind value to label
     lv_label_bind_text(speed_label, &speed_value, "%d MPH");
     
 
@@ -173,7 +214,7 @@ void ui_set_data(const int speed)
 {
     /* Lock, update, unlock */
     lvgl_port_lock(0);
-    //speed_value = speed
+    lv_subject_set_int(&speed_value, speed);
     lvgl_port_unlock();
 }
 
