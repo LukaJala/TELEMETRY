@@ -19,24 +19,27 @@ concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  IDF_VERSION: v5.3.2
+  IDF_TARGET: esp32
+
 jobs:
   build-apps:
     name: Build ${{ matrix.app.name }} (${{ matrix.app.target }})
     runs-on: ubuntu-latest
-    container: espressif/idf:release-v5.3
     strategy:
       fail-fast: false
       matrix:
         app:
           - name: FIRST_TEST
             path: FIRST_TEST
-            target: esp32p4
+            target: esp32
           - name: ReceiveTest
             path: ReceiveTest
-            target: esp32p4
+            target: esp32
           - name: SCREEN_TEST
             path: SCREEN_TEST/SCREEN_TEST
-            target: esp32p4
+            target: esp32
 
     defaults:
       run:
@@ -47,16 +50,48 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install ESP-IDF host dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            git wget flex bison gperf cmake ninja-build ccache \
+            libffi-dev libssl-dev dfu-util libusb-1.0-0
+
+      - name: Cache ESP-IDF and tools
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.espressif
+            ~/esp-idf
+          key: ${{ runner.os }}-espidf-${{ env.IDF_VERSION }}-${{ matrix.app.target }}
+
+      - name: Install ESP-IDF
+        run: |
+          if [ ! -d "$HOME/esp-idf" ]; then
+            git clone --depth 1 --branch "$IDF_VERSION" https://github.com/espressif/esp-idf.git "$HOME/esp-idf"
+          fi
+          "$HOME/esp-idf/install.sh" "${{ matrix.app.target }}"
+
       - name: Show ESP-IDF version
-        run: idf.py --version
+        run: |
+          . "$HOME/esp-idf/export.sh"
+          idf.py --version
 
       - name: Build firmware
         run: |
+          . "$HOME/esp-idf/export.sh"
           idf.py set-target ${{ matrix.app.target }}
           idf.py build
 
       - name: Print image sizes
-        run: idf.py size
+        run: |
+          . "$HOME/esp-idf/export.sh"
+          idf.py size
 
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
