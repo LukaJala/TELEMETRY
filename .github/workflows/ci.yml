@@ -1,25 +1,71 @@
-name: Build
+name: CI
 
 on:
-  push:
-    branches: [ main, master ]
-    paths:
-      - 'FIRST_TEST/**'
   pull_request:
-    branches: [ main, master ]
     paths:
       - 'FIRST_TEST/**'
+      - 'ReceiveTest/**'
+      - 'SCREEN_TEST/SCREEN_TEST/**'
+      - '.github/workflows/ci.yml'
+  push:
+    branches: [main, master]
+    paths:
+      - 'FIRST_TEST/**'
+      - 'ReceiveTest/**'
+      - 'SCREEN_TEST/SCREEN_TEST/**'
+      - '.github/workflows/ci.yml'
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
-  build:
+  build-apps:
+    name: Build ${{ matrix.app.name }} (${{ matrix.app.target }})
     runs-on: ubuntu-latest
-    container:
-      image: espressif/idf:v5.1.2
+    container: espressif/idf:release-v5.3
+    strategy:
+      fail-fast: false
+      matrix:
+        app:
+          - name: FIRST_TEST
+            path: FIRST_TEST
+            target: esp32p4
+          - name: ReceiveTest
+            path: ReceiveTest
+            target: esp32p4
+          - name: SCREEN_TEST
+            path: SCREEN_TEST/SCREEN_TEST
+            target: esp32p4
+
+    defaults:
+      run:
+        shell: bash
+        working-directory: ${{ matrix.app.path }}
+
     steps:
-      - uses: actions/checkout@v4
-      
-      - name: Build ESP-IDF Project
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Show ESP-IDF version
+        run: idf.py --version
+
+      - name: Build firmware
         run: |
-          . $IDF_PATH/export.sh
-          cd FIRST_TEST
+          idf.py set-target ${{ matrix.app.target }}
           idf.py build
+
+      - name: Print image sizes
+        run: idf.py size
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.app.name }}-firmware-${{ github.sha }}
+          path: |
+            ${{ matrix.app.path }}/build/*.bin
+            ${{ matrix.app.path }}/build/*.elf
+            ${{ matrix.app.path }}/build/*.map
+            ${{ matrix.app.path }}/build/bootloader/*.bin
+            ${{ matrix.app.path }}/build/partition_table/*.bin
+          if-no-files-found: error
