@@ -6,9 +6,6 @@ on:
       - 'v*'
   workflow_dispatch:
 
-permissions:
-  contents: write
-
 env:
   IDF_VERSION: v5.3.2
   IDF_TARGET: esp32p4
@@ -88,10 +85,3 @@ jobs:
           name: ${{ matrix.app.name }}-release-${{ github.ref_name }}
           path: ${{ matrix.app.path }}/dist/${{ matrix.app.name }}/*
           if-no-files-found: error
-
-      - name: Publish GitHub Release
-        if: startsWith(github.ref, 'refs/tags/')
-        uses: softprops/action-gh-release@v2
-        with:
-          files: ${{ matrix.app.path }}/dist/${{ matrix.app.name }}/*
-          generate_release_notes: true
