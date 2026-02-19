@@ -1,0 +1,45 @@
+name: LVGL Simulator
+
+on:
+  pull_request:
+    paths:
+      - "lv_port_pc_vscode/**"
+      - ".github/workflows/lvgl-sim.yml"
+  push:
+    branches: [main, master]
+    paths:
+      - "lv_port_pc_vscode/**"
+      - ".github/workflows/lvgl-sim.yml"
+  workflow_dispatch:
+
+jobs:
+  build-lvgl-sim:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install simulator dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake ninja-build libsdl2-dev xvfb
+
+      - name: Configure
+        run: cmake -S lv_port_pc_vscode -B lv_port_pc_vscode/build -G Ninja -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        run: cmake --build lv_port_pc_vscode/build --parallel
+
+      - name: Smoke-run simulator (headless)
+        run: |
+          set +e
+          timeout 10s xvfb-run -a lv_port_pc_vscode/bin/main
+          rc=$?
+          set -e
+          if [ "$rc" -ne 0 ] && [ "$rc" -ne 124 ]; then
+            echo "Simulator exited with unexpected status: $rc"
+            exit $rc
+          fi
