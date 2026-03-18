@@ -20,7 +20,7 @@ jobs:
       steps:
         - name: Checkout
           uses: actions/checkout@v4
-          # No submodules needed since you're storing the full simulator
+          # No submodules needed since you're storing the full simulator in your repo
 
         - name: Install dependencies
           run: |
@@ -35,7 +35,7 @@ jobs:
           working-directory: lv_port_pc_vscode
           run: cmake --build build --parallel
 
-        - name: Smoke test
+        - name: Smoke test (headless)
           working-directory: lv_port_pc_vscode
           run: |
             set +e
@@ -46,3 +46,14 @@ jobs:
               echo "Simulator exited with unexpected status: $rc"
               exit $rc
             fi
+            echo "✓ Simulator ran successfully!"
+
+        - name: Upload build artifacts (optional)
+          if: always()
+          uses: actions/upload-artifact@v4
+          with:
+            name: lvgl-simulator-build
+            path: |
+              lv_port_pc_vscode/build/bin/
+              lv_port_pc_vscode/build/*.log
+            if-no-files-found: ignore
