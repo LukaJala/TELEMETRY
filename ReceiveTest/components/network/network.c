@@ -7,6 +7,7 @@
  */
 
 #include "network.h"
+#include "network_utils.h"
 
 #include <string.h>
 #include "freertos/FreeRTOS.h"
@@ -87,6 +88,7 @@ static void ip_event_handler(void *arg, esp_event_base_t event_base,
 static void tcp_server_task(void *pvParameters)
 {
     char rx_buffer[RX_BUFFER_SIZE];
+    char clean_buffer[RX_BUFFER_SIZE];
     int listen_sock, client_sock;
     struct sockaddr_in server_addr, client_addr;
     socklen_t addr_len = sizeof(client_addr);
@@ -155,11 +157,15 @@ static void tcp_server_task(void *pvParameters)
                 /* Null-terminate the received string */
                 rx_buffer[len] = '\0';
 
-                ESP_LOGI(TAG, "Received: %s", rx_buffer);
+                size_t clean_len = network_sanitize_payload(
+                    rx_buffer, (size_t)len, clean_buffer, sizeof(clean_buffer)
+                );
+
+                ESP_LOGI(TAG, "Received (sanitized): %s", clean_buffer);
 
                 /* Call the callback function to handle the data */
-                if (data_callback != NULL) {
-                    data_callback(rx_buffer, len);
+                if (data_callback != NULL && clean_len > 0) {
+                    data_callback(clean_buffer, (int)clean_len);
                 }
             }
         }

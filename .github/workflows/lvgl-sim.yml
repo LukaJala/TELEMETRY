@@ -1,0 +1,102 @@
+name: LVGL Simulator
+
+on:
+  pull_request:
+    paths:
+      - "SCREEN_TEST/**"  # Trigger when UI files change
+      - ".github/workflows/lvgl-sim.yml"
+  push:
+    branches: [main, master]
+    paths:
+      - "SCREEN_TEST/**"
+      - ".github/workflows/lvgl-sim.yml"
+  workflow_dispatch:
+
+jobs:
+  build-lvgl-sim:
+    name: Build and Test LVGL Simulator
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout your code
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            cmake \
+            ninja-build \
+            libsdl2-dev \
+            libevdev-dev \
+            libevdev2 \
+            xvfb
+
+      - name: Clone LVGL Linux port
+        run: |
+          git clone --recursive https://github.com/lvgl/lv_port_linux.git
+          
+      - name: Copy UI files from SCREEN_TEST to simulator
+        run: |
+          # Create UI directory in simulator
+          mkdir -p lv_port_linux/src/my_ui
+          
+          # Copy your UI files
+          if [ -d "SCREEN_TEST/SCREEN_TEST/main" ]; then
+            cp -r SCREEN_TEST/SCREEN_TEST/main/* lv_port_linux/src/my_ui/
+            echo "✅ Copied UI files from SCREEN_TEST"
+          else
+            echo "⚠️ No UI files found in SCREEN_TEST/SCREEN_TEST/main"
+          fi
+          
+          echo "Files in my_ui:"
+          ls -la lv_port_linux/src/my_ui/ || echo "No files copied"
+
+      - name: Configure
+        working-directory: lv_port_linux
+        run: |
+          mkdir -p build
+          cd build
+          cmake .. -G Ninja -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        working-directory: lv_port_linux
+        run: |
+          cd build
+          cmake --build . --parallel
+
+      - name: Smoke test (headless)
+        working-directory: lv_port_linux
+        run: |
+          set +e
+          
+          # The executable is lvglsim in the bin directory
+          EXECUTABLE="build/bin/lvglsim"
+          
+          if [ ! -f "$EXECUTABLE" ] || [ ! -x "$EXECUTABLE" ]; then
+            echo "❌ Could not find simulator executable at $EXECUTABLE"
+            echo "📁 Build directory contents:"
+            ls -la build/
+            echo ""
+            echo "📁 Build/bin contents:"
+            ls -la build/bin/ 2>/dev/null || echo "build/bin/ does not exist"
+            exit 1
+          fi
+          
+          echo "✅ Found executable at: $EXECUTABLE"
+          echo ""
+          echo "🚀 Running simulator: $EXECUTABLE"
+          echo "----------------------------------------"
+          timeout 10s xvfb-run -a "$EXECUTABLE"
+          rc=$?
+          echo "----------------------------------------"
+          
+          set -e
+          if [ "$rc" -eq 124 ]; then
+            echo "✅ Simulator ran for 10 seconds and was killed (timeout) - this is good!"
+          elif [ "$rc" -eq 0 ]; then
+            echo "✅ Simulator completed successfully"
+          else
+            echo "❌ Simulator exited with unexpected status: $rc"
+            exit $rc
+          fi
