@@ -18,10 +18,9 @@ jobs:
       runs-on: ubuntu-latest
       
       steps:
-        - name: Checkout with submodules
+        - name: Checkout
           uses: actions/checkout@v4
-          with:
-            submodules: recursive  # This will pull LVGL submodules
+          # No submodules needed since you're storing the full simulator
 
         - name: Install dependencies
           run: |
@@ -36,7 +35,7 @@ jobs:
           working-directory: lv_port_pc_vscode
           run: cmake --build build --parallel
 
-        - name: Smoke test (headless)
+        - name: Smoke test
           working-directory: lv_port_pc_vscode
           run: |
             set +e
@@ -47,4 +46,3 @@ jobs:
               echo "Simulator exited with unexpected status: $rc"
               exit $rc
             fi
-            echo "Simulator ran successfully!"
