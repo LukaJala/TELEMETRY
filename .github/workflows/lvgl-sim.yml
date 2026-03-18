@@ -13,31 +13,38 @@ on:
   workflow_dispatch:
 
 jobs:
-  build-lvgl-sim:
-    runs-on: ubuntu-latest
+    build-lvgl-sim:
+      name: Build LVGL Simulator
+      runs-on: ubuntu-latest
+      
+      steps:
+        - name: Checkout with submodules
+          uses: actions/checkout@v4
+          with:
+            submodules: recursive  # This will pull LVGL submodules
 
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+        - name: Install dependencies
+          run: |
+            sudo apt-get update
+            sudo apt-get install -y cmake ninja-build libsdl2-dev xvfb
 
-      - name: Install simulator dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y cmake ninja-build libsdl2-dev xvfb
+        - name: Configure
+          working-directory: lv_port_pc_vscode
+          run: cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
 
-      - name: Configure
-        run: cmake -S lv_port_pc_vscode -B lv_port_pc_vscode/build -G Ninja -DCMAKE_BUILD_TYPE=Release
+        - name: Build
+          working-directory: lv_port_pc_vscode
+          run: cmake --build build --parallel
 
-      - name: Build
-        run: cmake --build lv_port_pc_vscode/build --parallel
-
-      - name: Smoke-run simulator (headless)
-        run: |
-          set +e
-          timeout 10s xvfb-run -a lv_port_pc_vscode/bin/main
-          rc=$?
-          set -e
-          if [ "$rc" -ne 0 ] && [ "$rc" -ne 124 ]; then
-            echo "Simulator exited with unexpected status: $rc"
-            exit $rc
-          fi
+        - name: Smoke test (headless)
+          working-directory: lv_port_pc_vscode
+          run: |
+            set +e
+            timeout 10s xvfb-run -a ./build/bin/main
+            rc=$?
+            set -e
+            if [ "$rc" -ne 0 ] && [ "$rc" -ne 124 ]; then
+              echo "Simulator exited with unexpected status: $rc"
+              exit $rc
+            fi
+            echo "Simulator ran successfully!"
