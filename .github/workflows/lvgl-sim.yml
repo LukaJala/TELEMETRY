@@ -32,7 +32,7 @@ jobs:
             libevdev2 \
             xvfb
 
-      - name: Clone LVGL Linux port (has executable)
+      - name: Clone LVGL Linux port
         run: |
           git clone --recursive https://github.com/lvgl/lv_port_linux.git
           
@@ -41,7 +41,7 @@ jobs:
           # Create UI directory in simulator
           mkdir -p lv_port_linux/src/my_ui
           
-          # Copy your UI files (adjust path if your UI is elsewhere)
+          # Copy your UI files
           if [ -d "SCREEN_TEST/SCREEN_TEST/main" ]; then
             cp -r SCREEN_TEST/SCREEN_TEST/main/* lv_port_linux/src/my_ui/
             echo "✅ Copied UI files from SCREEN_TEST"
@@ -49,7 +49,6 @@ jobs:
             echo "⚠️ No UI files found in SCREEN_TEST/SCREEN_TEST/main"
           fi
           
-          # List what was copied
           echo "Files in my_ui:"
           ls -la lv_port_linux/src/my_ui/ || echo "No files copied"
 
@@ -71,25 +70,15 @@ jobs:
         run: |
           set +e
           
-          # Find the executable (should be in build/bin/demo)
-          EXECUTABLE=""
+          # The executable is lvglsim in the bin directory
+          EXECUTABLE="build/bin/lvglsim"
           
-          # Check common locations
-          if [ -f "build/bin/demo" ] && [ -x "build/bin/demo" ]; then
-            EXECUTABLE="build/bin/demo"
-          elif [ -f "build/demo" ] && [ -x "build/demo" ]; then
-            EXECUTABLE="build/demo"
-          else
-            # Broader search
-            EXECUTABLE=$(find build -type f -executable -name "demo" | head -1)
-          fi
-          
-          if [ -z "$EXECUTABLE" ]; then
-            echo "❌ Could not find simulator executable!"
+          if [ ! -f "$EXECUTABLE" ] || [ ! -x "$EXECUTABLE" ]; then
+            echo "❌ Could not find simulator executable at $EXECUTABLE"
             echo "📁 Build directory contents:"
             ls -la build/
             echo ""
-            echo "📁 Build/bin contents (if exists):"
+            echo "📁 Build/bin contents:"
             ls -la build/bin/ 2>/dev/null || echo "build/bin/ does not exist"
             exit 1
           fi
@@ -111,13 +100,3 @@ jobs:
             echo "❌ Simulator exited with unexpected status: $rc"
             exit $rc
           fi
-
-      - name: Upload build artifacts (if needed)
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: lvgl-simulator-build-logs
-          path: |
-            lv_port_linux/build/CMakeFiles/*.log
-            lv_port_linux/build/*.log
-          if-no-files-found: ignore
