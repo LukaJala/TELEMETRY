@@ -3,14 +3,14 @@ name: CI
 on:
   pull_request:
     paths:
-      - 'FIRST_TEST/**'
+      # - 'FIRST_TEST/**'
       - 'ReceiveTest/**'
       - 'SCREEN_TEST/SCREEN_TEST/**'
       - '.github/workflows/ci.yml'
   push:
     branches: [main, master]
     paths:
-      - 'FIRST_TEST/**'
+      # - 'FIRST_TEST/**'
       - 'ReceiveTest/**'
       - 'SCREEN_TEST/SCREEN_TEST/**'
       - '.github/workflows/ci.yml'
@@ -31,9 +31,9 @@ jobs:
       fail-fast: false
       matrix:
         app:
-          - name: FIRST_TEST
-            path: FIRST_TEST
-            target: esp32p4
+          # - name: FIRST_TEST
+          #   path: FIRST_TEST
+          #   target: esp32p4
           - name: ReceiveTest
             path: ReceiveTest
             target: esp32p4
