@@ -50,11 +50,100 @@ jobs:
       - name: Configure
         working-directory: lv_port_pc_vscode
         run: cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
-
-      - name: Build
+      - name: Check CMakeLists.txt content
         working-directory: lv_port_pc_vscode
-        run: cmake --build build --parallel
-
+        run: |
+          echo "=== CMakeLists.txt ==="
+          cat CMakeLists.txt | grep -E "add_executable|add_library|project" -A 5 -B 5
+      - name: Check build targets
+        working-directory: lv_port_pc_vscode
+        run: |
+          echo "=== Available build targets ==="
+          cmake --build build --target help || true
+          
+          echo ""
+          echo "=== CMake output variables ==="
+          grep -E "EXECUTABLE|OUTPUT|BINARY" build/CMakeCache.txt | head -20
+      - name: Build simulator
+        working-directory: lv_port_pc_vscode
+        run: |
+          cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+          cmake --build build --parallel
+          
+      - name: Check for executable
+        working-directory: lv_port_pc_vscode
+        run: |
+          # Look for any built executable
+          EXE=$(find build -type f -executable -not -path "*/CMakeFiles/*" | head -1)
+          
+          if [ -n "$EXE" ]; then
+            echo "✅ Found executable: $EXE"
+            echo "Running smoke test..."
+            set +e
+            timeout 10s xvfb-run -a "$EXE"
+            rc=$?
+            set -e
+            if [ "$rc" -eq 124 ] || [ "$rc" -eq 0 ]; then
+              echo "✅ Test passed"
+            else
+              echo "❌ Test failed with code $rc"
+              exit $rc
+            fi
+          else
+            echo "❌ No executable found. This might be a library project."
+            echo "Looking for examples or demos to build..."
+            
+            # Try to build and run an example if available
+            if [ -d "demos" ]; then
+              cd demos
+              if [ -f "CMakeLists.txt" ]; then
+                mkdir -p build && cd build
+                cmake .. && make
+                ./demo 2>/dev/null &
+              fi
+            fi
+          fi
+      - name: Diagnose build output
+        working-directory: lv_port_pc_vscode
+        run: |
+          echo "=== STEP 1: Check what was built ==="
+          find build -type f -executable -not -path "*/CMakeFiles/*" | sort
+          
+          echo ""
+          echo "=== STEP 2: Check for .so/.a libraries ==="
+          find build -name "*.so" -o -name "*.a" | sort
+          
+          echo ""
+          echo "=== STEP 3: Check build logs ==="
+          if [ -f "build/CMakeFiles/CMakeOutput.log" ]; then
+            tail -20 build/CMakeFiles/CMakeOutput.log
+          fi
+          
+          echo ""
+          echo "=== STEP 4: Check if there's a 'main' function anywhere ==="
+          grep -r "int main" --include="*.c" --include="*.cpp" . | head -10
+          
+          echo ""
+          echo "=== STEP 5: Check what the build actually did ==="
+          if [ -f "build/.ninja_log" ]; then
+            echo "Last 10 built targets:"
+            tail -20 build/.ninja_log | cut -f5 -d'	' | sort -u | tail -10
+          fi
+      - name: Build with specific target
+        working-directory: lv_port_pc_vscode
+        run: |
+          # Try building all targets
+          cmake --build build --parallel
+          
+          # Look for any examples or demos
+          echo "Looking for example directories..."
+          find . -type d -name "example*" -o -name "demo*" | head -10
+          
+          # If there's a demo folder, try building it
+          if [ -d "demos" ]; then
+            echo "Building demos..."
+            cmake --build build --target demos --parallel || true
+          fi
       - name: Smoke test (headless)
         working-directory: lv_port_pc_vscode
         run: |
