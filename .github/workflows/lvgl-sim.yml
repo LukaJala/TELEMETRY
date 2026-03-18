@@ -26,18 +26,18 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y cmake ninja-build libsdl2-dev xvfb
 
-      - name: Clone LVGL Simulator
+      - name: Clone LVGL Linux port (has executable)
         run: |
-          git clone --recursive https://github.com/lvgl/lv_port_pc_vscode.git
+          git clone --recursive https://github.com/lvgl/lv_port_linux.git
           
       - name: Copy UI files from SCREEN_TEST to simulator
         run: |
           # Create UI directory in simulator
-          mkdir -p lv_port_pc_vscode/src/my_ui
+          mkdir -p lv_port_linux/src/my_ui
           
           # Copy your UI files (adjust path if your UI is elsewhere)
           if [ -d "SCREEN_TEST/SCREEN_TEST/main" ]; then
-            cp -r SCREEN_TEST/SCREEN_TEST/main/* lv_port_pc_vscode/src/my_ui/
+            cp -r SCREEN_TEST/SCREEN_TEST/main/* lv_port_linux/src/my_ui/
             echo "✅ Copied UI files from SCREEN_TEST"
           else
             echo "⚠️ No UI files found in SCREEN_TEST/SCREEN_TEST/main"
@@ -45,160 +45,50 @@ jobs:
           
           # List what was copied
           echo "Files in my_ui:"
-          ls -la lv_port_pc_vscode/src/my_ui/
+          ls -la lv_port_linux/src/my_ui/ || echo "No files copied"
 
       - name: Configure
-        working-directory: lv_port_pc_vscode
-        run: cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
-      - name: Check CMakeLists.txt content
-        working-directory: lv_port_pc_vscode
+        working-directory: lv_port_linux
         run: |
-          echo "=== CMakeLists.txt ==="
-          cat CMakeLists.txt | grep -E "add_executable|add_library|project" -A 5 -B 5
-      - name: Check build targets
-        working-directory: lv_port_pc_vscode
+          mkdir -p build
+          cd build
+          cmake .. -G Ninja -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        working-directory: lv_port_linux
         run: |
-          echo "=== Available build targets ==="
-          cmake --build build --target help || true
-          
-          echo ""
-          echo "=== CMake output variables ==="
-          grep -E "EXECUTABLE|OUTPUT|BINARY" build/CMakeCache.txt | head -20
-      - name: Build simulator
-        working-directory: lv_port_pc_vscode
-        run: |
-          cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
-          cmake --build build --parallel
-          
-      - name: Check for executable
-        working-directory: lv_port_pc_vscode
-        run: |
-          # Look for any built executable
-          EXE=$(find build -type f -executable -not -path "*/CMakeFiles/*" | head -1)
-          
-          if [ -n "$EXE" ]; then
-            echo "✅ Found executable: $EXE"
-            echo "Running smoke test..."
-            set +e
-            timeout 10s xvfb-run -a "$EXE"
-            rc=$?
-            set -e
-            if [ "$rc" -eq 124 ] || [ "$rc" -eq 0 ]; then
-              echo "✅ Test passed"
-            else
-              echo "❌ Test failed with code $rc"
-              exit $rc
-            fi
-          else
-            echo "❌ No executable found. This might be a library project."
-            echo "Looking for examples or demos to build..."
-            
-            # Try to build and run an example if available
-            if [ -d "demos" ]; then
-              cd demos
-              if [ -f "CMakeLists.txt" ]; then
-                mkdir -p build && cd build
-                cmake .. && make
-                ./demo 2>/dev/null &
-              fi
-            fi
-          fi
-      - name: Diagnose build output
-        working-directory: lv_port_pc_vscode
-        run: |
-          echo "=== STEP 1: Check what was built ==="
-          find build -type f -executable -not -path "*/CMakeFiles/*" | sort
-          
-          echo ""
-          echo "=== STEP 2: Check for .so/.a libraries ==="
-          find build -name "*.so" -o -name "*.a" | sort
-          
-          echo ""
-          echo "=== STEP 3: Check build logs ==="
-          if [ -f "build/CMakeFiles/CMakeOutput.log" ]; then
-            tail -20 build/CMakeFiles/CMakeOutput.log
-          fi
-          
-          echo ""
-          echo "=== STEP 4: Check if there's a 'main' function anywhere ==="
-          grep -r "int main" --include="*.c" --include="*.cpp" . | head -10
-          
-          echo ""
-          echo "=== STEP 5: Check what the build actually did ==="
-          if [ -f "build/.ninja_log" ]; then
-            echo "Last 10 built targets:"
-            tail -20 build/.ninja_log | cut -f5 -d'	' | sort -u | tail -10
-          fi
-      - name: Build with specific target
-        working-directory: lv_port_pc_vscode
-        run: |
-          # Try building all targets
-          cmake --build build --parallel
-          
-          # Look for any examples or demos
-          echo "Looking for example directories..."
-          find . -type d -name "example*" -o -name "demo*" | head -10
-          
-          # If there's a demo folder, try building it
-          if [ -d "demos" ]; then
-            echo "Building demos..."
-            cmake --build build --target demos --parallel || true
-          fi
+          cd build
+          cmake --build . --parallel
+
       - name: Smoke test (headless)
-        working-directory: lv_port_pc_vscode
+        working-directory: lv_port_linux
         run: |
           set +e
           
-          # Find the executable
-          echo "🔍 Searching for simulator executable..."
+          # Find the executable (should be in build/bin/demo)
           EXECUTABLE=""
           
-          # Check common locations and names
-          POSSIBLE_PATHS=(
-            "./build/bin/main"
-            "./build/main"
-            "./build/bin/lvgl_sim"
-            "./build/lvgl_sim" 
-            "./build/bin/demo"
-            "./build/demo"
-            "./build/bin/lv_sim"
-            "./build/lv_sim"
-          )
-          
-          for path in "${POSSIBLE_PATHS[@]}"; do
-            if [ -f "$path" ] && [ -x "$path" ]; then
-              EXECUTABLE="$path"
-              echo "✅ Found executable at: $EXECUTABLE"
-              break
-            fi
-          done
-          
-          # If not found, try a broader search
-          if [ -z "$EXECUTABLE" ]; then
-            echo "🔍 Executable not in common locations, searching build directory..."
-            EXECUTABLE=$(find build -type f -executable -name "main" -o -name "lvgl_sim" -o -name "demo" -o -name "lv_sim" | head -1)
-            
-            if [ -n "$EXECUTABLE" ]; then
-              echo "✅ Found executable at: $EXECUTABLE"
-            fi
+          # Check common locations
+          if [ -f "build/bin/demo" ] && [ -x "build/bin/demo" ]; then
+            EXECUTABLE="build/bin/demo"
+          elif [ -f "build/demo" ] && [ -x "build/demo" ]; then
+            EXECUTABLE="build/demo"
+          else
+            # Broader search
+            EXECUTABLE=$(find build -type f -executable -name "demo" | head -1)
           fi
           
-          # If still not found, list directory contents for debugging
           if [ -z "$EXECUTABLE" ]; then
             echo "❌ Could not find simulator executable!"
-            echo ""
-            echo "📁 Contents of build directory:"
+            echo "📁 Build directory contents:"
             ls -la build/
             echo ""
-            echo "📁 Contents of build/bin (if exists):"
+            echo "📁 Build/bin contents (if exists):"
             ls -la build/bin/ 2>/dev/null || echo "build/bin/ does not exist"
-            echo ""
-            echo "📁 All executable files in build:"
-            find build -type f -executable | head -20
             exit 1
           fi
           
-          # Run the simulator
+          echo "✅ Found executable at: $EXECUTABLE"
           echo ""
           echo "🚀 Running simulator: $EXECUTABLE"
           echo "----------------------------------------"
@@ -215,20 +105,13 @@ jobs:
             echo "❌ Simulator exited with unexpected status: $rc"
             exit $rc
           fi
-      - name: Verify build succeeded
-        working-directory: lv_port_pc_vscode
-        run: |
-          if [ ! -d "build" ]; then
-            echo "❌ Build directory not found!"
-            exit 1
-          fi
-          
-          # Check if build completed (look for CMake cache files)
-          if [ ! -f "build/CMakeCache.txt" ]; then
-            echo "❌ CMake configuration failed!"
-            exit 1
-          fi
-          
-          echo "✅ Build directory exists"
-          echo "📊 Build directory size:"
-          du -sh build/
+
+      - name: Upload build artifacts (if needed)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: lvgl-simulator-build-logs
+          path: |
+            lv_port_linux/build/CMakeFiles/*.log
+            lv_port_linux/build/*.log
+          if-no-files-found: ignore
