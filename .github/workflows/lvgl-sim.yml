@@ -3,57 +3,78 @@ name: LVGL Simulator
 on:
   pull_request:
     paths:
-      - "lv_port_pc_vscode/**"
+      - "SCREEN_TEST/**"  # Trigger when UI files change
       - ".github/workflows/lvgl-sim.yml"
   push:
     branches: [main, master]
     paths:
-      - "lv_port_pc_vscode/**"
+      - "SCREEN_TEST/**"
       - ".github/workflows/lvgl-sim.yml"
   workflow_dispatch:
 
 jobs:
-    build-lvgl-sim:
-      name: Build LVGL Simulator
-      runs-on: ubuntu-latest
-      
-      steps:
-        - name: Checkout
-          uses: actions/checkout@v4
-          # No submodules needed since you're storing the full simulator in your repo
+  build-lvgl-sim:
+    name: Build and Test LVGL Simulator
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout your code
+        uses: actions/checkout@v4
 
-        - name: Install dependencies
-          run: |
-            sudo apt-get update
-            sudo apt-get install -y cmake ninja-build libsdl2-dev xvfb
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake ninja-build libsdl2-dev xvfb
 
-        - name: Configure
-          working-directory: lv_port_pc_vscode
-          run: cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+      - name: Clone LVGL Simulator
+        run: |
+          git clone --recursive https://github.com/lvgl/lv_port_pc_vscode.git
+          
+      - name: Copy UI files from SCREEN_TEST to simulator
+        run: |
+          # Create UI directory in simulator
+          mkdir -p lv_port_pc_vscode/src/my_ui
+          
+          # Copy your UI files (adjust path if your UI is elsewhere)
+          if [ -d "SCREEN_TEST/SCREEN_TEST/main" ]; then
+            cp -r SCREEN_TEST/SCREEN_TEST/main/* lv_port_pc_vscode/src/my_ui/
+            echo "✅ Copied UI files from SCREEN_TEST"
+          else
+            echo "⚠️ No UI files found in SCREEN_TEST/SCREEN_TEST/main"
+          fi
+          
+          # List what was copied
+          echo "Files in my_ui:"
+          ls -la lv_port_pc_vscode/src/my_ui/
 
-        - name: Build
-          working-directory: lv_port_pc_vscode
-          run: cmake --build build --parallel
+      - name: Configure
+        working-directory: lv_port_pc_vscode
+        run: cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
 
-        - name: Smoke test (headless)
-          working-directory: lv_port_pc_vscode
-          run: |
-            set +e
-            timeout 10s xvfb-run -a ./build/bin/main
-            rc=$?
-            set -e
-            if [ "$rc" -ne 0 ] && [ "$rc" -ne 124 ]; then
-              echo "Simulator exited with unexpected status: $rc"
-              exit $rc
-            fi
-            echo "✓ Simulator ran successfully!"
+      - name: Build
+        working-directory: lv_port_pc_vscode
+        run: cmake --build build --parallel
 
-        - name: Upload build artifacts (optional)
-          if: always()
-          uses: actions/upload-artifact@v4
-          with:
-            name: lvgl-simulator-build
-            path: |
-              lv_port_pc_vscode/build/bin/
-              lv_port_pc_vscode/build/*.log
-            if-no-files-found: ignore
+      - name: Smoke test (headless)
+        working-directory: lv_port_pc_vscode
+        run: |
+          set +e
+          timeout 10s xvfb-run -a ./build/bin/main
+          rc=$?
+          set -e
+          if [ "$rc" -eq 124 ]; then
+            echo "✅ Simulator ran for 10 seconds and was killed (timeout) - this is good!"
+          elif [ "$rc" -eq 0 ]; then
+            echo "✅ Simulator completed successfully"
+          else
+            echo "❌ Simulator exited with unexpected status: $rc"
+            exit $rc
+          fi
+
+      - name: Upload build logs (if failed)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: lvgl-simulator-build-logs
+          path: lv_port_pc_vscode/build/CMakeFiles/*.log
+          if-no-files-found: ignorecat .gitignore
