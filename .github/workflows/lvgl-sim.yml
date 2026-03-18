@@ -59,8 +59,64 @@ jobs:
         working-directory: lv_port_pc_vscode
         run: |
           set +e
-          timeout 10s xvfb-run -a ./build/bin/main
+          
+          # Find the executable
+          echo "🔍 Searching for simulator executable..."
+          EXECUTABLE=""
+          
+          # Check common locations and names
+          POSSIBLE_PATHS=(
+            "./build/bin/main"
+            "./build/main"
+            "./build/bin/lvgl_sim"
+            "./build/lvgl_sim" 
+            "./build/bin/demo"
+            "./build/demo"
+            "./build/bin/lv_sim"
+            "./build/lv_sim"
+          )
+          
+          for path in "${POSSIBLE_PATHS[@]}"; do
+            if [ -f "$path" ] && [ -x "$path" ]; then
+              EXECUTABLE="$path"
+              echo "✅ Found executable at: $EXECUTABLE"
+              break
+            fi
+          done
+          
+          # If not found, try a broader search
+          if [ -z "$EXECUTABLE" ]; then
+            echo "🔍 Executable not in common locations, searching build directory..."
+            EXECUTABLE=$(find build -type f -executable -name "main" -o -name "lvgl_sim" -o -name "demo" -o -name "lv_sim" | head -1)
+            
+            if [ -n "$EXECUTABLE" ]; then
+              echo "✅ Found executable at: $EXECUTABLE"
+            fi
+          fi
+          
+          # If still not found, list directory contents for debugging
+          if [ -z "$EXECUTABLE" ]; then
+            echo "❌ Could not find simulator executable!"
+            echo ""
+            echo "📁 Contents of build directory:"
+            ls -la build/
+            echo ""
+            echo "📁 Contents of build/bin (if exists):"
+            ls -la build/bin/ 2>/dev/null || echo "build/bin/ does not exist"
+            echo ""
+            echo "📁 All executable files in build:"
+            find build -type f -executable | head -20
+            exit 1
+          fi
+          
+          # Run the simulator
+          echo ""
+          echo "🚀 Running simulator: $EXECUTABLE"
+          echo "----------------------------------------"
+          timeout 10s xvfb-run -a "$EXECUTABLE"
           rc=$?
+          echo "----------------------------------------"
+          
           set -e
           if [ "$rc" -eq 124 ]; then
             echo "✅ Simulator ran for 10 seconds and was killed (timeout) - this is good!"
@@ -70,11 +126,20 @@ jobs:
             echo "❌ Simulator exited with unexpected status: $rc"
             exit $rc
           fi
-
-      - name: Upload build logs (if failed)
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: lvgl-simulator-build-logs
-          path: lv_port_pc_vscode/build/CMakeFiles/*.log
-          if-no-files-found: ignorecat .gitignore
+      - name: Verify build succeeded
+        working-directory: lv_port_pc_vscode
+        run: |
+          if [ ! -d "build" ]; then
+            echo "❌ Build directory not found!"
+            exit 1
+          fi
+          
+          # Check if build completed (look for CMake cache files)
+          if [ ! -f "build/CMakeCache.txt" ]; then
+            echo "❌ CMake configuration failed!"
+            exit 1
+          fi
+          
+          echo "✅ Build directory exists"
+          echo "📊 Build directory size:"
+          du -sh build/
