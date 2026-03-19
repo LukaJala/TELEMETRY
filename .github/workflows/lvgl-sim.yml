@@ -28,6 +28,7 @@ jobs:
             cmake \
             ninja-build \
             libsdl2-dev \
+            libsdl2-image-dev \
             libevdev-dev \
             libevdev2 \
             xvfb \
@@ -39,15 +40,22 @@ jobs:
       - name: Clone LVGL Linux port
         run: |
           git clone --recursive https://github.com/lvgl/lv_port_linux.git
-      - name: Inspect lv_port_linux CMake options
+
+      - name: Patch lv_conf.defaults for SDL
+        working-directory: lv_port_linux
         run: |
-          echo "--- CMakeLists.txt ---"
-          cat lv_port_linux/CMakeLists.txt
-          echo "--- lv_conf.defaults (if exists) ---"
-          cat lv_port_linux/lv_conf.defaults 2>/dev/null || true
-          echo "--- any cmake files mentioning SDL ---"
-          grep -rn "SDL\|sdl\|BACKEND\|backend" lv_port_linux/CMakeLists.txt || true
-          grep -rn "option(" lv_port_linux/CMakeLists.txt || true
+          python3 -c "
+          path = 'lv_conf.defaults'
+          src = open(path).read()
+          src = src.replace('LV_USE_LINUX_FBDEV      1', 'LV_USE_LINUX_FBDEV      0')
+          src = src.replace('LV_USE_SDL              0', 'LV_USE_SDL              1')
+          src = src.replace('LV_SDL_ACCELERATED      1', 'LV_SDL_ACCELERATED      0')
+          src = src.replace('LV_USE_EVDEV    1',         'LV_USE_EVDEV    0')
+          open(path, 'w').write(src)
+          print('Patched lv_conf.defaults')
+          "
+          echo "--- verify ---"
+          grep -E "LV_USE_SDL|LV_USE_LINUX_FBDEV|LV_USE_EVDEV|LV_SDL_ACCELERATED" lv_conf.defaults
 
       - name: Copy UI files to lv_port_linux/src/ui/
         run: |
@@ -63,9 +71,7 @@ jobs:
             exit 1
           fi
 
-          # Sanitize with Python to avoid sed escaping headaches
           python3 -c "
-          import sys
           path = 'lv_port_linux/src/ui/ui.c'
           src = open(path).read()
           src = src.replace('&amp;', '&')
@@ -76,7 +82,6 @@ jobs:
           remaining = src.count('&amp;')
           print('Sanitized. Remaining occurrences: ' + str(remaining))
           "
-
           echo "--- verify no leftover entities ---"
           grep -n "amp;" lv_port_linux/src/ui/ui.c && echo "❌ Still dirty!" || echo "✅ Clean"
 
@@ -88,11 +93,9 @@ jobs:
           echo "--- current demo calls in main.c ---"
           grep -n "demo\|Demo\|app_main\|ui_init" lv_port_linux/src/main.c | head -30
 
-          # Add ui.h include after the lvgl include
           sed -i 's|#include "lvgl/lvgl.h"|#include "lvgl/lvgl.h"\n#include "ui/ui.h"|' \
             lv_port_linux/src/main.c
 
-          # Replace whichever demo function is called with ui_init
           sed -i 's/lv_demo_widgets()/ui_init(lv_display_get_default())/' lv_port_linux/src/main.c
           sed -i 's/lv_demo_benchmark()/ui_init(lv_display_get_default())/' lv_port_linux/src/main.c
           sed -i 's/lv_demo_music()/ui_init(lv_display_get_default())/' lv_port_linux/src/main.c
@@ -102,11 +105,7 @@ jobs:
           grep -n "demo\|Demo\|ui_init\|ui\.h" lv_port_linux/src/main.c
 
           CMAKE="lv_port_linux/CMakeLists.txt"
-
-          # Add ui.c to the sources list
           sed -i 's|src/main.c|src/main.c\n    src/ui/ui.c|' "$CMAKE"
-
-          # Add src/ui to include dirs
           sed -i 's|include_directories(src)|include_directories(src)\ninclude_directories(src/ui)|' "$CMAKE"
 
           echo "--- patched CMakeLists.txt ---"
@@ -117,72 +116,18 @@ jobs:
         run: |
           mkdir -p build
           cd build
-          cmake .. -G Ninja -DCMAKE_BUILD_TYPE=Release \
-            -DBACKEND_SDL=ON \
-            -DBACKEND_FBDEV=OFF \
-            -DBACKEND_EVDEV=OFF
-    
+          cmake .. -G Ninja -DCMAKE_BUILD_TYPE=Release
+
       - name: Build
         working-directory: lv_port_linux
         run: |
           cd build
           cmake --build . --parallel
+
       - name: Check available backends
         working-directory: lv_port_linux
         run: |
           build/bin/lvglsim -B || true
-      - name: Debug simulator output
-        working-directory: lv_port_linux
-        run: |
-          set +e
-          
-          Xvfb :99 -screen 0 800x600x24 -ac &
-          XVFB_PID=$!
-          sleep 1
-
-          # Run with stdout/stderr visible so we can see LVGL logs
-          echo "--- Running simulator for 6s ---"
-          DISPLAY=:99 SDL_VIDEODRIVER=x11 SDL_VIDEO_X11_VISUALID="" \
-            LIBGL_ALWAYS_SOFTWARE=1 \
-            build/bin/lvglsim 2>&1 &
-          SIM_PID=$!
-          sleep 2
-
-          # List all windows on :99 right after launch
-          echo "--- Windows on :99 at t=2s ---"
-          DISPLAY=:99 xdotool search --name "" 2>/dev/null || echo "No windows yet"
-          DISPLAY=:99 xlsclients 2>/dev/null || true
-
-          sleep 3  # wait for more frames
-
-          echo "--- Windows on :99 at t=5s ---"
-          DISPLAY=:99 xdotool search --name "" 2>/dev/null || echo "Still no windows"
-
-          # Try screenshotting every window we can find
-          for WIN in $(DISPLAY=:99 xdotool search --name "" 2>/dev/null); do
-            echo "Trying window $WIN..."
-            DISPLAY=:99 xwd -id "$WIN" -silent 2>/dev/null | convert xwd:- "win_${WIN}.png" 2>/dev/null && \
-              identify "win_${WIN}.png" || true
-          done
-
-          # Also grab the full root
-          DISPLAY=:99 scrot fullscreen.png 2>/dev/null || true
-          [ -f fullscreen.png ] && identify fullscreen.png || echo "scrot failed"
-
-          kill $SIM_PID  2>/dev/null || true
-          kill $XVFB_PID 2>/dev/null || true
-          wait $SIM_PID  2>/dev/null || true
-          wait $XVFB_PID 2>/dev/null || true
-
-      - name: Upload debug screenshots
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: debug-screenshots
-          path: |
-            lv_port_linux/win_*.png
-            lv_port_linux/fullscreen.png
-          if-no-files-found: warn
 
       - name: Test simulator (headless, with screenshot)
         working-directory: lv_port_linux
@@ -215,3 +160,11 @@ jobs:
           wait $XVFB_PID 2>/dev/null || true
 
           [ -f screenshot.png ] && identify screenshot.png || echo "❌ No screenshot"
+
+      - name: Upload screenshot artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: lvgl-screenshot
+          path: lv_port_linux/screenshot.png
+          if-no-files-found: warn
