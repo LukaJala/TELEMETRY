@@ -31,7 +31,7 @@ jobs:
             libevdev-dev \
             libevdev2 \
             xvfb \
-            x11-utils \
+            x11-apps \
             xdotool \
             scrot \
             imagemagick
@@ -58,6 +58,38 @@ jobs:
           
           echo "Files in src/ui:"
           ls -la lv_port_linux/src/ui/
+      - name: Patch lv_port_linux to use our UI
+        run: |
+          # ── 1. Show what main.c currently calls ──────────────────────────
+          echo "--- current demo calls in main.c ---"
+          grep -n "demo\|Demo\|app_main\|ui_init" lv_port_linux/src/main.c | head -30
+          
+          # ── 2. Add ui.h include after the lvgl include ───────────────────
+          sed -i 's|#include "lvgl/lvgl.h"|#include "lvgl/lvgl.h"\n#include "ui/ui.h"|' \
+            lv_port_linux/src/main.c
+          
+          # ── 3. Replace whatever demo function is called with ui_init ─────
+          sed -i 's/lv_demo_widgets()/ui_init(lv_display_get_default())/' lv_port_linux/src/main.c
+          sed -i 's/lv_demo_benchmark()/ui_init(lv_display_get_default())/' lv_port_linux/src/main.c
+          sed -i 's/lv_demo_music()/ui_init(lv_display_get_default())/' lv_port_linux/src/main.c
+          sed -i 's/lv_demo_stress()/ui_init(lv_display_get_default())/' lv_port_linux/src/main.c
+          
+          echo "--- patched main.c (relevant lines) ---"
+          grep -n "demo\|Demo\|ui_init\|ui\.h" lv_port_linux/src/main.c
+
+          # ── 4. Add ui.c to CMakeLists so it actually compiles ────────────
+          CMAKE="lv_port_linux/CMakeLists.txt"
+          echo "--- current CMakeLists.txt ---"
+          cat "$CMAKE"
+          
+          # Append ui.c to the sources list
+          sed -i 's|src/main.c|src/main.c\n    src/ui/ui.c|' "$CMAKE"
+          
+          # Add src/ui to include dirs
+          sed -i 's|include_directories(src)|include_directories(src)\ninclude_directories(src/ui)|' "$CMAKE"
+          
+          echo "--- patched CMakeLists.txt ---"
+          cat "$CMAKE"
       - name: Configure
         working-directory: lv_port_linux
         run: |
