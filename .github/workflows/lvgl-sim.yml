@@ -32,6 +32,8 @@ jobs:
             libevdev2 \
             xvfb \
             x11-utils \
+            xdotool \
+            scrot \
             imagemagick
 
       - name: Clone LVGL Linux port
@@ -82,24 +84,30 @@ jobs:
             exit 1
           fi
 
-          # ── 1. Start a real Xvfb on a fixed display ──────────────────────
-          Xvfb :99 -screen 0 480x320x24 -ac &
+          # 1. Start Xvfb on fixed display
+          Xvfb :99 -screen 0 800x600x24 -ac &
           XVFB_PID=$!
-          sleep 1   # let Xvfb fully initialize
+          sleep 1
 
-          # ── 2. Run simulator against that same display ────────────────────
+          # 2. Launch simulator — force SDL to use X11 (not Wayland/offscreen)
           echo "✅ Launching simulator..."
-          DISPLAY=:99 "$EXECUTABLE" &
+          DISPLAY=:99 SDL_VIDEODRIVER=x11 "$EXECUTABLE" &
           SIM_PID=$!
-          sleep 4   # let LVGL render a few frames
+          sleep 4   # let LVGL render
 
-          # ── 3. Capture root window of :99 ────────────────────────────────
+          # 3. Find the SDL window ID and screenshot it specifically
           echo "✅ Capturing screenshot..."
-          xwd -root -display :99 -silent | convert xwd:- screenshot.png 2>/dev/null \
-            || DISPLAY=:99 import -window root screenshot.png 2>/dev/null \
-            || true
+          WIN_ID=$(DISPLAY=:99 xdotool search --sync --onlyvisible --name "" 2>/dev/null | head -1)
 
-          # ── 4. Tear down ──────────────────────────────────────────────────
+          if [ -n "$WIN_ID" ]; then
+            echo "Found window ID: $WIN_ID"
+            DISPLAY=:99 xwd -id "$WIN_ID" -silent | convert xwd:- screenshot.png 2>/dev/null
+          else
+            echo "No window found, falling back to scrot full-screen..."
+            DISPLAY=:99 scrot screenshot.png 2>/dev/null || true
+          fi
+
+          # 4. Tear down
           kill $SIM_PID  2>/dev/null || true
           kill $XVFB_PID 2>/dev/null || true
           wait $SIM_PID  2>/dev/null || true
@@ -109,13 +117,5 @@ jobs:
             echo "✅ Screenshot captured:"
             identify screenshot.png
           else
-            echo "❌ No screenshot — check if LVGL opened an SDL window"
+            echo "❌ No screenshot"
           fi
-
-      - name: Upload screenshot artifact
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: lvgl-screenshot
-          path: lv_port_linux/screenshot.png
-          if-no-files-found: warn
