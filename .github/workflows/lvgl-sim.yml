@@ -109,7 +109,10 @@ jobs:
           mkdir -p build
           cd build
           cmake .. -G Ninja -DCMAKE_BUILD_TYPE=Release
-
+      - name: Check available backends
+        working-directory: lv_port_linux
+        run: |
+          build/bin/lvglsim -B || true
       - name: Build
         working-directory: lv_port_linux
         run: |
