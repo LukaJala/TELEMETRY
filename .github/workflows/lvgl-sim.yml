@@ -115,6 +115,58 @@ jobs:
         run: |
           cd build
           cmake --build . --parallel
+      - name: Debug simulator output
+        working-directory: lv_port_linux
+        run: |
+          set +e
+          
+          Xvfb :99 -screen 0 800x600x24 -ac &
+          XVFB_PID=$!
+          sleep 1
+
+          # Run with stdout/stderr visible so we can see LVGL logs
+          echo "--- Running simulator for 6s ---"
+          DISPLAY=:99 SDL_VIDEODRIVER=x11 SDL_VIDEO_X11_VISUALID="" \
+            LIBGL_ALWAYS_SOFTWARE=1 \
+            build/bin/lvglsim 2>&1 &
+          SIM_PID=$!
+          sleep 2
+
+          # List all windows on :99 right after launch
+          echo "--- Windows on :99 at t=2s ---"
+          DISPLAY=:99 xdotool search --name "" 2>/dev/null || echo "No windows yet"
+          DISPLAY=:99 xlsclients 2>/dev/null || true
+
+          sleep 3  # wait for more frames
+
+          echo "--- Windows on :99 at t=5s ---"
+          DISPLAY=:99 xdotool search --name "" 2>/dev/null || echo "Still no windows"
+
+          # Try screenshotting every window we can find
+          for WIN in $(DISPLAY=:99 xdotool search --name "" 2>/dev/null); do
+            echo "Trying window $WIN..."
+            DISPLAY=:99 xwd -id "$WIN" -silent 2>/dev/null | convert xwd:- "win_${WIN}.png" 2>/dev/null && \
+              identify "win_${WIN}.png" || true
+          done
+
+          # Also grab the full root
+          DISPLAY=:99 scrot fullscreen.png 2>/dev/null || true
+          [ -f fullscreen.png ] && identify fullscreen.png || echo "scrot failed"
+
+          kill $SIM_PID  2>/dev/null || true
+          kill $XVFB_PID 2>/dev/null || true
+          wait $SIM_PID  2>/dev/null || true
+          wait $XVFB_PID 2>/dev/null || true
+
+      - name: Upload debug screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: debug-screenshots
+          path: |
+            lv_port_linux/win_*.png
+            lv_port_linux/fullscreen.png
+          if-no-files-found: warn
 
       - name: Test simulator (headless, with screenshot)
         working-directory: lv_port_linux
