@@ -39,6 +39,15 @@ jobs:
       - name: Clone LVGL Linux port
         run: |
           git clone --recursive https://github.com/lvgl/lv_port_linux.git
+      - name: Inspect lv_port_linux CMake options
+        run: |
+          echo "--- CMakeLists.txt ---"
+          cat lv_port_linux/CMakeLists.txt
+          echo "--- lv_conf.defaults (if exists) ---"
+          cat lv_port_linux/lv_conf.defaults 2>/dev/null || true
+          echo "--- any cmake files mentioning SDL ---"
+          grep -rn "SDL\|sdl\|BACKEND\|backend" lv_port_linux/CMakeLists.txt || true
+          grep -rn "option(" lv_port_linux/CMakeLists.txt || true
 
       - name: Copy UI files to lv_port_linux/src/ui/
         run: |
