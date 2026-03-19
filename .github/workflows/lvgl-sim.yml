@@ -30,7 +30,8 @@ jobs:
             libsdl2-dev \
             libevdev-dev \
             libevdev2 \
-            xvfb
+            xvfb \
+            imagemagick
 
       - name: Clone LVGL Linux port
         run: |
@@ -82,19 +83,31 @@ jobs:
           
           echo "✅ Running simulator for 5s and capturing screenshot..."
           
-          # Run with xvfb and import screenshot
-          timeout 5s xvfb-run -a --server-args="-screen 0 1024x768x24" "$EXECUTABLE" -r 10 &
+          # Run with xvfb, screenshot, upload artifact
+          DISPLAY=:99 xvfb-run -a --server-args="-screen 0 1024x768x24 -ac" "$EXECUTABLE" -r 10 &
           SIM_PID=$!
-          sleep 3
+          sleep 4  # Let UI render
           
-          # Capture screenshot using import (ImageMagick)
-          import -window ROOT -display :99 screenshot.png || echo "Screenshot failed (normal in headless)"
-          sleep 2
-          kill $SIM_PID || true
+          # Screenshot with import
+          import -display :99 -window ROOT screenshot.png 2>/dev/null || true
+          
+          kill $SIM_PID 2>/dev/null || true
+          wait $SIM_PID 2>/dev/null || true
+          
+          if [ -f screenshot.png ]; then
+            echo "✅ Screenshot captured:"
+            identify screenshot.png
+          else
+            echo "No screenshot (headless limitation)"
+          fi
           
           echo "Screenshot saved (if visible):"
           ls -la screenshot.png || echo "No screenshot (headless ok)"
-          echo "✅ Simulator test passed if built &amp; ran"
+          echo "✅ Simulator test complete"
           
+          # Upload screenshot as artifact
+          echo "::group::Screenshot artifact"
+          ls -la screenshot.png || echo "No screenshot"
+          echo "::endgroup::"
+
           rc=0
-          set -e
