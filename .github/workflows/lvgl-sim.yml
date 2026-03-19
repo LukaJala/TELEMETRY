@@ -31,6 +31,7 @@ jobs:
             libevdev-dev \
             libevdev2 \
             xvfb \
+            x11-utils \       # adds xwd for reliable root-window capture
             imagemagick
 
       - name: Clone LVGL Linux port
@@ -72,42 +73,49 @@ jobs:
         working-directory: lv_port_linux
         run: |
           set +e
-          
+
           EXECUTABLE="build/bin/lvglsim"
-          
+
           if [ ! -f "$EXECUTABLE" ] || [ ! -x "$EXECUTABLE" ]; then
             echo "❌ Build failed: no lvglsim"
             ls -la build/bin/ || true
             exit 1
           fi
-          
-          echo "✅ Running simulator for 5s and capturing screenshot..."
-          
-          # Run with xvfb, screenshot, upload artifact
-          DISPLAY=:99 xvfb-run -a --server-args="-screen 0 1024x768x24 -ac" "$EXECUTABLE" -r 10 &
+
+          # ── 1. Start a real Xvfb on a fixed display ──────────────────────
+          Xvfb :99 -screen 0 480x320x24 -ac &
+          XVFB_PID=$!
+          sleep 1   # let Xvfb fully initialize
+
+          # ── 2. Run simulator against that same display ────────────────────
+          echo "✅ Launching simulator..."
+          DISPLAY=:99 "$EXECUTABLE" &
           SIM_PID=$!
-          sleep 4  # Let UI render
-          
-          # Screenshot with import
-          import -display :99 -window ROOT screenshot.png 2>/dev/null || true
-          
-          kill $SIM_PID 2>/dev/null || true
-          wait $SIM_PID 2>/dev/null || true
-          
+          sleep 4   # let LVGL render a few frames
+
+          # ── 3. Capture root window of :99 ────────────────────────────────
+          echo "✅ Capturing screenshot..."
+          xwd -root -display :99 -silent | convert xwd:- screenshot.png 2>/dev/null \
+            || DISPLAY=:99 import -window root screenshot.png 2>/dev/null \
+            || true
+
+          # ── 4. Tear down ──────────────────────────────────────────────────
+          kill $SIM_PID  2>/dev/null || true
+          kill $XVFB_PID 2>/dev/null || true
+          wait $SIM_PID  2>/dev/null || true
+          wait $XVFB_PID 2>/dev/null || true
+
           if [ -f screenshot.png ]; then
             echo "✅ Screenshot captured:"
             identify screenshot.png
           else
-            echo "No screenshot (headless limitation)"
+            echo "❌ No screenshot — check if LVGL opened an SDL window"
           fi
-          
-          echo "Screenshot saved (if visible):"
-          ls -la screenshot.png || echo "No screenshot (headless ok)"
-          echo "✅ Simulator test complete"
-          
-          # Upload screenshot as artifact
-          echo "::group::Screenshot artifact"
-          ls -la screenshot.png || echo "No screenshot"
-          echo "::endgroup::"
 
-          rc=0
+      - name: Upload screenshot artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: lvgl-screenshot
+          path: lv_port_linux/screenshot.png
+          if-no-files-found: warn
