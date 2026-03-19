@@ -31,7 +31,7 @@ jobs:
             libevdev-dev \
             libevdev2 \
             xvfb \
-            x11-utils \       # adds xwd for reliable root-window capture
+            x11-utils \ 
             imagemagick
 
       - name: Clone LVGL Linux port
