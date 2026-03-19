@@ -54,7 +54,6 @@ jobs:
           
           echo "Files in src/ui:"
           ls -la lv_port_linux/src/ui/
-
       - name: Configure
         working-directory: lv_port_linux
         run: |
