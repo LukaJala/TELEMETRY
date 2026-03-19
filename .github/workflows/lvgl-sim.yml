@@ -42,22 +42,32 @@ jobs:
           
       - name: Copy UI files to lv_port_linux/src/ui/
         run: |
-          # Remove existing UI if any, create fresh
           rm -rf lv_port_linux/src/ui
           mkdir -p lv_port_linux/src/ui
-          
-          # Copy UI files specifically (exclude ESP-IDF files)
+
           if [[ -f "SCREEN_TEST/SCREEN_TEST/main/ui.c" && -f "SCREEN_TEST/SCREEN_TEST/main/ui.h" ]]; then
             cp SCREEN_TEST/SCREEN_TEST/main/ui.c lv_port_linux/src/ui/
             cp SCREEN_TEST/SCREEN_TEST/main/ui.h lv_port_linux/src/ui/
-            echo "✅ Copied ui.c and ui.h to lv_port_linux/src/ui/"
+            echo "✅ Copied ui.c and ui.h"
           else
-            echo "❌ UI files not found in SCREEN_TEST/SCREEN_TEST/main/"
+            echo "❌ UI files not found"
             exit 1
           fi
-          
-          echo "Files in src/ui:"
-          ls -la lv_port_linux/src/ui/
+
+          # ── Fix 1: decode HTML entities (copy-paste from HTML docs) ──────
+          sed -i 's/&amp;/\&/g' lv_port_linux/src/ui/ui.c
+          sed -i 's/&lt;/</g'  lv_port_linux/src/ui/ui.c
+          sed -i 's/&gt;/>/g'  lv_port_linux/src/ui/ui.c
+
+          # ── Fix 2: LVGL v8 → v9 API renames ─────────────────────────────
+          sed -i 's/lv_anim_set_playback_duration/lv_anim_set_reverse_duration/g' \
+            lv_port_linux/src/ui/ui.c
+
+          echo "✅ Sanitized ui.c"
+          echo "--- verify no leftover &amp; ---"
+          grep -n "amp;" lv_port_linux/src/ui/ui.c || echo "✅ Clean"
+          echo "--- verify API names ---"
+          grep -n "playback_duration\|reverse_duration" lv_port_linux/src/ui/ui.c || true/
       - name: Patch lv_port_linux to use our UI
         run: |
           # ── 1. Show what main.c currently calls ──────────────────────────
