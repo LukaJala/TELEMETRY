@@ -3,7 +3,7 @@ name: LVGL Simulator
 on:
   pull_request:
     paths:
-      - "SCREEN_TEST/**"  # Trigger when UI files change
+      - "SCREEN_TEST/**"
       - ".github/workflows/lvgl-sim.yml"
   push:
     branches: [main, master]
@@ -16,7 +16,7 @@ jobs:
   build-lvgl-sim:
     name: Build and Test LVGL Simulator
     runs-on: ubuntu-latest
-    
+
     steps:
       - name: Checkout your code
         uses: actions/checkout@v4
@@ -39,7 +39,7 @@ jobs:
       - name: Clone LVGL Linux port
         run: |
           git clone --recursive https://github.com/lvgl/lv_port_linux.git
-          
+
       - name: Copy UI files to lv_port_linux/src/ui/
         run: |
           rm -rf lv_port_linux/src/ui
@@ -50,56 +50,59 @@ jobs:
             cp SCREEN_TEST/SCREEN_TEST/main/ui.h lv_port_linux/src/ui/
             echo "✅ Copied ui.c and ui.h"
           else
-            echo "❌ UI files not found"
+            echo "❌ UI files not found in SCREEN_TEST/SCREEN_TEST/main/"
             exit 1
           fi
 
-          # ── Fix 1: decode HTML entities (copy-paste from HTML docs) ──────
-          sed -i 's/&amp;/\&/g' lv_port_linux/src/ui/ui.c
-          sed -i 's/&lt;/</g'  lv_port_linux/src/ui/ui.c
-          sed -i 's/&gt;/>/g'  lv_port_linux/src/ui/ui.c
+          # Sanitize with Python to avoid sed escaping headaches
+          python3 -c "
+          import sys
+          path = 'lv_port_linux/src/ui/ui.c'
+          src = open(path).read()
+          src = src.replace('&amp;', '&')
+          src = src.replace('&lt;', '<')
+          src = src.replace('&gt;', '>')
+          src = src.replace('lv_anim_set_playback_duration', 'lv_anim_set_reverse_duration')
+          open(path, 'w').write(src)
+          remaining = src.count('&amp;')
+          print('Sanitized. Remaining occurrences: ' + str(remaining))
+          "
 
-          # ── Fix 2: LVGL v8 → v9 API renames ─────────────────────────────
-          sed -i 's/lv_anim_set_playback_duration/lv_anim_set_reverse_duration/g' \
-            lv_port_linux/src/ui/ui.c
+          echo "--- verify no leftover entities ---"
+          grep -n "amp;" lv_port_linux/src/ui/ui.c && echo "❌ Still dirty!" || echo "✅ Clean"
 
-          echo "✅ Sanitized ui.c"
-          echo "--- verify no leftover &amp; ---"
-          grep -n "amp;" lv_port_linux/src/ui/ui.c || echo "✅ Clean"
-          echo "--- verify API names ---"
-          grep -n "playback_duration\|reverse_duration" lv_port_linux/src/ui/ui.c || true/
+          echo "Files in src/ui:"
+          ls -la lv_port_linux/src/ui/
+
       - name: Patch lv_port_linux to use our UI
         run: |
-          # ── 1. Show what main.c currently calls ──────────────────────────
           echo "--- current demo calls in main.c ---"
           grep -n "demo\|Demo\|app_main\|ui_init" lv_port_linux/src/main.c | head -30
-          
-          # ── 2. Add ui.h include after the lvgl include ───────────────────
+
+          # Add ui.h include after the lvgl include
           sed -i 's|#include "lvgl/lvgl.h"|#include "lvgl/lvgl.h"\n#include "ui/ui.h"|' \
             lv_port_linux/src/main.c
-          
-          # ── 3. Replace whatever demo function is called with ui_init ─────
+
+          # Replace whichever demo function is called with ui_init
           sed -i 's/lv_demo_widgets()/ui_init(lv_display_get_default())/' lv_port_linux/src/main.c
           sed -i 's/lv_demo_benchmark()/ui_init(lv_display_get_default())/' lv_port_linux/src/main.c
           sed -i 's/lv_demo_music()/ui_init(lv_display_get_default())/' lv_port_linux/src/main.c
           sed -i 's/lv_demo_stress()/ui_init(lv_display_get_default())/' lv_port_linux/src/main.c
-          
+
           echo "--- patched main.c (relevant lines) ---"
           grep -n "demo\|Demo\|ui_init\|ui\.h" lv_port_linux/src/main.c
 
-          # ── 4. Add ui.c to CMakeLists so it actually compiles ────────────
           CMAKE="lv_port_linux/CMakeLists.txt"
-          echo "--- current CMakeLists.txt ---"
-          cat "$CMAKE"
-          
-          # Append ui.c to the sources list
+
+          # Add ui.c to the sources list
           sed -i 's|src/main.c|src/main.c\n    src/ui/ui.c|' "$CMAKE"
-          
+
           # Add src/ui to include dirs
           sed -i 's|include_directories(src)|include_directories(src)\ninclude_directories(src/ui)|' "$CMAKE"
-          
+
           echo "--- patched CMakeLists.txt ---"
           cat "$CMAKE"
+
       - name: Configure
         working-directory: lv_port_linux
         run: |
@@ -126,18 +129,18 @@ jobs:
             exit 1
           fi
 
-          # 1. Start Xvfb on fixed display
+          # 1. Start Xvfb on a fixed display number
           Xvfb :99 -screen 0 800x600x24 -ac &
           XVFB_PID=$!
           sleep 1
 
-          # 2. Launch simulator — force SDL to use X11 (not Wayland/offscreen)
+          # 2. Launch simulator — force SDL to use X11 backend
           echo "✅ Launching simulator..."
           DISPLAY=:99 SDL_VIDEODRIVER=x11 "$EXECUTABLE" &
           SIM_PID=$!
-          sleep 4   # let LVGL render
+          sleep 4
 
-          # 3. Find the SDL window ID and screenshot it specifically
+          # 3. Find the SDL window and screenshot it
           echo "✅ Capturing screenshot..."
           WIN_ID=$(DISPLAY=:99 xdotool search --sync --onlyvisible --name "" 2>/dev/null | head -1)
 
@@ -145,7 +148,7 @@ jobs:
             echo "Found window ID: $WIN_ID"
             DISPLAY=:99 xwd -id "$WIN_ID" -silent | convert xwd:- screenshot.png 2>/dev/null
           else
-            echo "No window found, falling back to scrot full-screen..."
+            echo "No specific window found, falling back to scrot..."
             DISPLAY=:99 scrot screenshot.png 2>/dev/null || true
           fi
 
@@ -161,3 +164,11 @@ jobs:
           else
             echo "❌ No screenshot"
           fi
+
+      - name: Upload screenshot artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: lvgl-screenshot
+          path: lv_port_linux/screenshot.png
+          if-no-files-found: warn
