@@ -41,17 +41,21 @@ jobs:
         run: |
           git clone --recursive https://github.com/lvgl/lv_port_linux.git
 
-      - name: Create lv_conf.h for SDL
+      - name: Patch lv_conf.defaults for SDL
         working-directory: lv_port_linux
         run: |
-          cp lv_conf_template.h lv_conf.h
-          sed -i 's/#if 0/#if 1/g' lv_conf.h
-          sed -i 's/#define LV_USE_LINUX_FBDEV 1/#define LV_USE_LINUX_FBDEV 0/g' lv_conf.h
-          sed -i 's/#define LV_USE_SDL 0/#define LV_USE_SDL 1/g' lv_conf.h
-          sed -i 's/#define LV_SDL_ACCELERATED 1/#define LV_SDL_ACCELERATED 0/g' lv_conf.h
-          sed -i 's/#define LV_USE_EVDEV 1/#define LV_USE_EVDEV 0/g' lv_conf.h
+          python3 -c "
+          path = 'lv_conf.defaults'
+          src = open(path).read()
+          src = src.replace('LV_USE_LINUX_FBDEV      1', 'LV_USE_LINUX_FBDEV      0')
+          src = src.replace('LV_USE_SDL              0', 'LV_USE_SDL              1')
+          src = src.replace('LV_SDL_ACCELERATED      1', 'LV_SDL_ACCELERATED      0')
+          src = src.replace('LV_USE_EVDEV    1',         'LV_USE_EVDEV    0')
+          open(path, 'w').write(src)
+          print('Patched lv_conf.defaults')
+          "
           echo "--- verify ---"
-          grep -E "LV_USE_SDL|LV_USE_LINUX_FBDEV|LV_USE_EVDEV|LV_SDL_ACCELERATED" lv_conf.h
+          grep -E "LV_USE_SDL|LV_USE_LINUX_FBDEV|LV_USE_EVDEV|LV_SDL_ACCELERATED" lv_conf.defaults
 
       - name: Copy UI files to lv_port_linux/src/ui/
         run: |
