@@ -62,9 +62,10 @@ jobs:
           rm -rf lv_port_linux/src/ui
           mkdir -p lv_port_linux/src/ui
 
+          sed -i 's|\\&amp;|\\&|g; s|\\<|\\<|g; s|\\>|\\>|g' SCREEN_TEST/SCREEN_TEST/main/ui.c
           cp SCREEN_TEST/SCREEN_TEST/main/ui.h lv_port_linux/src/ui/
-          cp SCREEN_TEST/SCREEN_TEST/main/lvgl_demo_ui.c lv_port_linux/src/ui/ui.c || cp SCREEN_TEST/SCREEN_TEST/main/ui.c lv_port_linux/src/ui/ui.c
-          echo "✅ Copied clean UI files (demo fallback)"
+          cp SCREEN_TEST/SCREEN_TEST/main/ui.c lv_port_linux/src/ui/ui.c
+          echo "✅ Copied and pre-sanitized ui.c/ui.h"
 
           python3 -c "
           path = 'lv_port_linux/src/ui/ui.c'
@@ -91,10 +92,10 @@ jobs:
           sed -i 's|#include "lvgl/lvgl.h"|#include "lvgl/lvgl.h"\n#include "ui/ui.h"|' \
             lv_port_linux/src/main.c
 
-          sed -i 's/lv_demo_widgets()/example_lvgl_demo_ui(NULL)/' lv_port_linux/src/main.c
-          sed -i 's/lv_demo_benchmark()/example_lvgl_demo_ui(NULL)/' lv_port_linux/src/main.c
-          sed -i 's/lv_demo_music()/example_lvgl_demo_ui(NULL)/' lv_port_linux/src/main.c
-          sed -i 's/lv_demo_stress()/example_lvgl_demo_ui(NULL)/' lv_port_linux/src/main.c
+          sed -i 's|lv_demo_widgets(|ui_init(lv_display_get_default()|' lv_port_linux/src/main.c
+          sed -i 's|lv_demo_benchmark(|ui_init(lv_display_get_default()|' lv_port_linux/src/main.c
+          sed -i 's|lv_demo_music(|ui_init(lv_display_get_default()|' lv_port_linux/src/main.c
+          sed -i 's|lv_demo_stress(|ui_init(lv_display_get_default()|' lv_port_linux/src/main.c
 
           echo "--- patched main.c (relevant lines) ---"
           grep -n "demo\|Demo\|ui_init\|ui\.h" lv_port_linux/src/main.c
