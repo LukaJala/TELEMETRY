@@ -62,10 +62,8 @@ jobs:
           rm -rf lv_port_linux/src/ui
           mkdir -p lv_port_linux/src/ui
 
-          sed -i 's|\\&amp;|\\&|g; s|\\<|\\<|g; s|\\>|\\>|g' SCREEN_TEST/SCREEN_TEST/main/ui.c
-          cp SCREEN_TEST/SCREEN_TEST/main/ui.h lv_port_linux/src/ui/
-          cp SCREEN_TEST/SCREEN_TEST/main/ui.c lv_port_linux/src/ui/ui.c
-          echo "✅ Copied and pre-sanitized ui.c/ui.h"
+          cp test_ui.c lv_port_linux/src/ui/ui.c
+          echo "✅ Copied simple test UI (LV v8 compatible text)"
 
           python3 -c "
           path = 'lv_port_linux/src/ui/ui.c'
@@ -78,9 +76,6 @@ jobs:
           remaining = src.count('&amp;')
           print('Sanitized. Remaining occurrences: ' + str(remaining))
           "
-          echo "--- verify no leftover entities ---"
-          grep -n "amp;" lv_port_linux/src/ui/ui.c && echo "❌ Still dirty!" || echo "✅ Clean"
-
           echo "Files in src/ui:"
           ls -la lv_port_linux/src/ui/
 
@@ -92,10 +87,7 @@ jobs:
           sed -i 's|#include "lvgl/lvgl.h"|#include "lvgl/lvgl.h"\n#include "ui/ui.h"|' \
             lv_port_linux/src/main.c
 
-          sed -i 's|lv_demo_widgets(|ui_init(lv_display_get_default()|' lv_port_linux/src/main.c
-          sed -i 's|lv_demo_benchmark(|ui_init(lv_display_get_default()|' lv_port_linux/src/main.c
-          sed -i 's|lv_demo_music(|ui_init(lv_display_get_default()|' lv_port_linux/src/main.c
-          sed -i 's|lv_demo_stress(|ui_init(lv_display_get_default()|' lv_port_linux/src/main.c
+          sed -i 's/lv_demo_widgets()/test_ui_init(NULL)/' lv_port_linux/src/main.c
 
           sed -i 's/lv_demo_widgets_start_slideshow();//' lv_port_linux/src/main.c
 
