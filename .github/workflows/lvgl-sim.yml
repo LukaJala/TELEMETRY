@@ -97,8 +97,10 @@ jobs:
           sed -i 's|lv_demo_music(|ui_init(lv_display_get_default()|' lv_port_linux/src/main.c
           sed -i 's|lv_demo_stress(|ui_init(lv_display_get_default()|' lv_port_linux/src/main.c
 
+          sed -i 's/lv_demo_widgets_start_slideshow();//' lv_port_linux/src/main.c
+
           echo "--- patched main.c (relevant lines) ---"
-          grep -n "demo\|Demo\|ui_init\|ui\.h" lv_port_linux/src/main.c
+          grep -n "demo\\|Demo\\|ui_init\\|ui\\.h\\|slideshow" lv_port_linux/src/main.c
 
           CMAKE="lv_port_linux/CMakeLists.txt"
           sed -i 's|src/main.c|src/main.c\n    src/ui/ui.c|' "$CMAKE"
