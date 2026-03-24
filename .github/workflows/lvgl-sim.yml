@@ -62,8 +62,8 @@ jobs:
           rm -rf lv_port_linux/src/ui
           mkdir -p lv_port_linux/src/ui
 
-          cp test_ui.c lv_port_linux/src/ui/ui.c
-          echo "✅ Copied simple test UI (LV v8 compatible text)"
+          cp test_ui.* lv_port_linux/src/ui/
+          echo "✅ Copied test_ui.c + test_ui.h"
 
           python3 -c "
           path = 'lv_port_linux/src/ui/ui.c'
