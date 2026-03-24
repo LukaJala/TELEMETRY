@@ -136,8 +136,10 @@ jobs:
           XVFB_PID=$!
           sleep 1
 
-          echo "✅ Launching simulator with SDL backend..."
-          SDL_VIDEODRIVER=x11 build/bin/lvglsim &
+          echo "✅ Launching simulator - check backends first..."
+          build/bin/lvglsim -B
+          echo "✅ Launching with FBDEV fallback if SDL fails..."
+          SDL_VIDEODRIVER=dummy build/bin/lvglsim -b sdl || build/bin/lvglsim -b linuxfb &
           SIM_PID=$!
           sleep 10
 
