@@ -41,35 +41,26 @@ jobs:
         run: |
           git clone --recursive https://github.com/lvgl/lv_port_linux.git
 
-      - name: Patch lv_conf.defaults for SDL
+      - name: Create lv_conf.h for SDL
         working-directory: lv_port_linux
         run: |
-          python3 -c "
-          path = 'lv_conf.defaults'
-          src = open(path).read()
-          src = src.replace('LV_USE_LINUX_FBDEV      1', 'LV_USE_LINUX_FBDEV      0')
-          src = src.replace('LV_USE_SDL              0', 'LV_USE_SDL              1')
-          src = src.replace('LV_SDL_ACCELERATED      1', 'LV_SDL_ACCELERATED      0')
-          src = src.replace('LV_USE_EVDEV    1',         'LV_USE_EVDEV    0')
-          open(path, 'w').write(src)
-          print('Patched lv_conf.defaults')
-          "
+          cp lv_conf_template.h lv_conf.h
+          sed -i 's/#if 0/#if 1/g' lv_conf.h
+          sed -i 's/#define LV_USE_LINUX_FBDEV 1/#define LV_USE_LINUX_FBDEV 0/g' lv_conf.h
+          sed -i 's/#define LV_USE_SDL 0/#define LV_USE_SDL 1/g' lv_conf.h
+          sed -i 's/#define LV_SDL_ACCELERATED 1/#define LV_SDL_ACCELERATED 0/g' lv_conf.h
+          sed -i 's/#define LV_USE_EVDEV 1/#define LV_USE_EVDEV 0/g' lv_conf.h
           echo "--- verify ---"
-          grep -E "LV_USE_SDL|LV_USE_LINUX_FBDEV|LV_USE_EVDEV|LV_SDL_ACCELERATED" lv_conf.defaults
+          grep -E "LV_USE_SDL|LV_USE_LINUX_FBDEV|LV_USE_EVDEV|LV_SDL_ACCELERATED" lv_conf.h
 
       - name: Copy UI files to lv_port_linux/src/ui/
         run: |
           rm -rf lv_port_linux/src/ui
           mkdir -p lv_port_linux/src/ui
 
-          if [[ -f "SCREEN_TEST/SCREEN_TEST/main/ui.c" && -f "SCREEN_TEST/SCREEN_TEST/main/ui.h" ]]; then
-            cp SCREEN_TEST/SCREEN_TEST/main/ui.c lv_port_linux/src/ui/
-            cp SCREEN_TEST/SCREEN_TEST/main/ui.h lv_port_linux/src/ui/
-            echo "✅ Copied ui.c and ui.h"
-          else
-            echo "❌ UI files not found in SCREEN_TEST/SCREEN_TEST/main/"
-            exit 1
-          fi
+          cp SCREEN_TEST/SCREEN_TEST/main/ui.h lv_port_linux/src/ui/
+          cp SCREEN_TEST/SCREEN_TEST/main/lvgl_demo_ui.c lv_port_linux/src/ui/ui.c || cp SCREEN_TEST/SCREEN_TEST/main/ui.c lv_port_linux/src/ui/ui.c
+          echo "✅ Copied clean UI files (demo fallback)"
 
           python3 -c "
           path = 'lv_port_linux/src/ui/ui.c'
@@ -96,10 +87,10 @@ jobs:
           sed -i 's|#include "lvgl/lvgl.h"|#include "lvgl/lvgl.h"\n#include "ui/ui.h"|' \
             lv_port_linux/src/main.c
 
-          sed -i 's/lv_demo_widgets()/ui_init(lv_display_get_default())/' lv_port_linux/src/main.c
-          sed -i 's/lv_demo_benchmark()/ui_init(lv_display_get_default())/' lv_port_linux/src/main.c
-          sed -i 's/lv_demo_music()/ui_init(lv_display_get_default())/' lv_port_linux/src/main.c
-          sed -i 's/lv_demo_stress()/ui_init(lv_display_get_default())/' lv_port_linux/src/main.c
+          sed -i 's/lv_demo_widgets()/example_lvgl_demo_ui(NULL)/' lv_port_linux/src/main.c
+          sed -i 's/lv_demo_benchmark()/example_lvgl_demo_ui(NULL)/' lv_port_linux/src/main.c
+          sed -i 's/lv_demo_music()/example_lvgl_demo_ui(NULL)/' lv_port_linux/src/main.c
+          sed -i 's/lv_demo_stress()/example_lvgl_demo_ui(NULL)/' lv_port_linux/src/main.c
 
           echo "--- patched main.c (relevant lines) ---"
           grep -n "demo\|Demo\|ui_init\|ui\.h" lv_port_linux/src/main.c
@@ -139,9 +130,9 @@ jobs:
           sleep 1
 
           echo "✅ Launching simulator with SDL backend..."
-          DISPLAY=:99 SDL_VIDEODRIVER=x11 build/bin/lvglsim -b sdl &
+          SDL_VIDEODRIVER=x11 build/bin/lvglsim &
           SIM_PID=$!
-          sleep 5
+          sleep 10
 
           echo "✅ Capturing screenshot..."
           WIN_ID=$(DISPLAY=:99 xdotool search --sync --onlyvisible --name "" 2>/dev/null | head -1)
