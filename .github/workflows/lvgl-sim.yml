@@ -60,22 +60,27 @@ jobs:
       - name: Copy UI files to lv_port_linux/src/ui/
         run: |
           rm -rf lv_port_linux/src/ui
-          mkdir -p lv_port_linux/src/ui
+          mkdir -p lv_port_linux/src/ui/
 
-          cp test_ui.* lv_port_linux/src/ui/
-          echo "✅ Copied test_ui.c + test_ui.h"
+          sed -i 's|\\&amp;|\\&|g; s|\\<|\\<|g; s|\\>|\\>|g' SCREEN_TEST/SCREEN_TEST/main/ui.c
+          cp SCREEN_TEST/SCREEN_TEST/main/ui.h lv_port_linux/src/ui/
+          cp SCREEN_TEST/SCREEN_TEST/main/ui.c lv_port_linux/src/ui/ui.c
+          echo "✅ Copied and pre-sanitized ui.c/ui.h"
 
           python3 -c "
           path = 'lv_port_linux/src/ui/ui.c'
           src = open(path).read()
           src = src.replace('&amp;', '&')
-          src = src.replace('&lt;', '<')
-          src = src.replace('&gt;', '>')
+          src = src.replace('<', '<')
+          src = src.replace('>', '>')
           src = src.replace('lv_anim_set_playback_duration', 'lv_anim_set_reverse_duration')
           open(path, 'w').write(src)
           remaining = src.count('&amp;')
           print('Sanitized. Remaining occurrences: ' + str(remaining))
           "
+          echo "--- verify no leftover entities ---"
+          grep -n "amp;" lv_port_linux/src/ui/ui.c && echo "❌ Still dirty!" || echo "✅ Clean"
+
           echo "Files in src/ui:"
           ls -la lv_port_linux/src/ui/
 
@@ -87,7 +92,10 @@ jobs:
           sed -i 's|#include "lvgl/lvgl.h"|#include "lvgl/lvgl.h"\n#include "ui/ui.h"|' \
             lv_port_linux/src/main.c
 
-          sed -i 's/lv_demo_widgets()/test_ui_init(NULL)/' lv_port_linux/src/main.c
+          sed -i 's|lv_demo_widgets(|ui_init(lv_display_get_default()|' lv_port_linux/src/main.c
+          sed -i 's|lv_demo_benchmark(|ui_init(lv_display_get_default()|' lv_port_linux/src/main.c
+          sed -i 's|lv_demo_music(|ui_init(lv_display_get_default()|' lv_port_linux/src/main.c
+          sed -i 's|lv_demo_stress(|ui_init(lv_display_get_default()|' lv_port_linux/src/main.c
 
           sed -i 's/lv_demo_widgets_start_slideshow();//' lv_port_linux/src/main.c
 
@@ -160,3 +168,4 @@ jobs:
           name: lvgl-screenshot
           path: lv_port_linux/screenshot.png
           if-no-files-found: warn
+
