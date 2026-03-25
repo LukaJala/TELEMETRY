@@ -98,6 +98,7 @@ jobs:
           sed -i 's|lv_demo_stress(|ui_init(lv_display_get_default()|' lv_port_linux/src/main.c
 
           sed -i 's/lv_demo_widgets_start_slideshow();//' lv_port_linux/src/main.c
+          sed -i '/lv_demo_widgets_start_slideshow()/s/^/# /; /lv_demo_widgets_start_slideshow()/s/$/ # Disabled to fix black UI/' lv_port_linux/src/main.c
 
           echo "--- patched main.c (relevant lines) ---"
           grep -n "demo\\|Demo\\|ui_init\\|ui\\.h\\|slideshow" lv_port_linux/src/main.c
@@ -138,21 +139,33 @@ jobs:
 
           echo "✅ Launching simulator - check backends first..."
           build/bin/lvglsim -B
-          echo "✅ Launching with FBDEV fallback if SDL fails..."
-          SDL_VIDEODRIVER=dummy build/bin/lvglsim -b sdl || build/bin/lvglsim -b linuxfb &
+          echo "✅ Launching SDL preferred (no dummy), fallback FBDEV..."
+          build/bin/lvglsim -b sdl || build/bin/lvglsim -b linuxfb &
           SIM_PID=$!
-          sleep 10
+          echo "Waiting for UI to render..."
+          sleep 15
 
-          echo "✅ Capturing screenshot..."
-          WIN_ID=$(DISPLAY=:99 xdotool search --sync --onlyvisible --name "" 2>/dev/null | head -1)
+          # Focus sim window and capture with retries
+          DISPLAY=:99 xdotool search --class lvglsim windowactivate --sync 2>/dev/null || true
+          sleep 2
+          DISPLAY=:99 scrot screenshot.png || true
 
-          if [ -n "$WIN_ID" ]; then
-            echo "Found window ID: $WIN_ID"
-            DISPLAY=:99 xwd -id "$WIN_ID" -silent | convert xwd:- screenshot.png 2>/dev/null
-          else
-            echo "No window found, falling back to scrot..."
-            DISPLAY=:99 scrot screenshot.png 2>/dev/null || true
-          fi
+          # Check/ retry if black/small
+          for i in {1..5}; do
+            if [ -f screenshot.png ]; then
+              size=$(stat -c%s screenshot.png 2>/dev/null || echo 0)
+              if [ $size -gt 5000 ]; then
+                mean=$(identify -quiet -format '%[mean]' screenshot.png 2>/dev/null || echo "black")
+                if [[ ! "$mean" =~ ^0,0,0$ ]]; then
+                  echo "✅ Good screenshot: size $size, mean $mean"
+                  break
+                fi
+              fi
+            fi
+            echo "Retry capture $i/5"
+            DISPLAY=:99 scrot screenshot.png || true
+            sleep 3
+          done
 
           kill $SIM_PID  2>/dev/null || true
           kill $XVFB_PID 2>/dev/null || true
