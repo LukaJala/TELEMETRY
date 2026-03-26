@@ -151,7 +151,7 @@ jobs:
           # LVGL does: init → theme load → widget tree build → first lv_timer_handler tick
           # On a cold CI runner this can take 5-10s before pixels appear.
           echo "Waiting for UI to render..."
-          sleep 45
+          sleep 120
 
           # Screenshot with retries
           for i in {1..5}; do
