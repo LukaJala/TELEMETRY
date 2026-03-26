@@ -62,9 +62,9 @@ jobs:
           rm -rf lv_port_linux/src/ui
           mkdir -p lv_port_linux/src/ui/
 
-          sed -i 's|\\&amp;|\\&|g; s|\\<|\\<|g; s|\\>|\\>|g' SCREEN_TEST/SCREEN_TEST/main/ui.c
+          sed -i 's|\\&amp;|\\&|g; s|\\<|\\<|g; s|\\>|\\>|g' SCREEN_TEST/SCREEN_TEST/main/lvgl_demo_ui.c
           cp SCREEN_TEST/SCREEN_TEST/main/ui.h lv_port_linux/src/ui/
-          cp SCREEN_TEST/SCREEN_TEST/main/ui.c lv_port_linux/src/ui/ui.c
+          cp SCREEN_TEST/SCREEN_TEST/main/lvgl_demo_ui.c lv_port_linux/src/ui/ui.c
           echo "✅ Copied and pre-sanitized ui.c/ui.h"
 
           python3 -c "
@@ -133,59 +133,57 @@ jobs:
         run: |
           set +e
 
-          # Start Xvfb virtual display
           Xvfb :99 -screen 0 800x480x24 -ac &
           XVFB_PID=$!
           sleep 2
 
-          # ✅ FIX #1: Export DISPLAY so the simulator and all subprocesses
-          # can find the virtual display. Without this, SDL calls XOpenDisplay()
-          # and gets NULL → falls back to nothing → black screenshot.
           export DISPLAY=:99
 
           echo "✅ Launching SDL simulator..."
           build/bin/lvglsim -b sdl &
           SIM_PID=$!
 
-          # ✅ FIX #2: Give LVGL more time to initialize + render first frame.
-          # LVGL does: init → theme load → widget tree build → first lv_timer_handler tick
-          # On a cold CI runner this can take 5-10s before pixels appear.
           echo "Waiting for UI to render..."
-          sleep 120
+          sleep 60
 
-          # Screenshot with retries
-          for i in {1..5}; do
-            scrot screenshot.png
-            size=$(stat -c%s screenshot.png 2>/dev/null || echo 0)
-            echo "Attempt $i: file size = $size bytes"
-
-            if [ "$size" -gt 5000 ]; then
-              # ✅ FIX #3: ImageMagick 'mean' output is a float like "12345.6",
-              # NOT "0,0,0" — the old regex would NEVER match so it always retried.
-              mean=$(identify -quiet -format '%[fx:mean]' screenshot.png 2>/dev/null || echo "0")
-              echo "Mean pixel value: $mean"
-              if [ "$mean" != "0" ] && [ "$mean" != "0.0" ]; then
-                echo "✅ Good screenshot captured!"
-                break
-              fi
-            fi
-
-            echo "Retry $i/5 — waiting..."
-            sleep 3
+          # Capture frames for GIF (10 frames over 20 seconds)
+          echo "📸 Capturing frames for GIF..."
+          for i in $(seq -w 1 10); do
+            scrot "frame_${i}.png"
+            sleep 2
           done
 
-          kill $SIM_PID  2>/dev/null || true
-          kill $XVFB_PID 2>/dev/null || true
-          wait $SIM_PID  2>/dev/null || true
-          wait $XVFB_PID 2>/dev/null || true
+          # Stitch into GIF
+          echo "🎞️ Stitching GIF..."
+          convert -delay 20 -loop 0 frame_*.png dashboard_startup.gif
 
-          [ -f screenshot.png ] && identify screenshot.png || echo "❌ No screenshot produced"
+          # Use the last frame as the final screenshot for regression check
+          cp frame_10.png screenshot.png
 
+          # Regression check — fail CI if the UI looks blank
+          mean=$(identify -quiet -format '%[fx:mean]' screenshot.png 2>/dev/null || echo "0")
+          echo "Mean pixel value: $mean"
+          python3 -c "
+          mean = float('$mean')
+          if mean < 0.05:
+              print('❌ Screenshot looks blank — UI may have failed to render!')
+              exit(1)
+          print(f'✅ UI looks good (mean brightness = {mean:.3f})')
+          "
+
+              kill $SIM_PID  2>/dev/null || true
+              kill $XVFB_PID 2>/dev/null || true
+              wait $SIM_PID  2>/dev/null || true
+              wait $XVFB_PID 2>/dev/null || true
+
+              [ -f screenshot.png ] && identify screenshot.png || echo "❌ No screenshot produced"
       - name: Upload screenshot artifact
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: lvgl-screenshot
-          path: lv_port_linux/screenshot.png
+          name: lvgl-screenshots
+          path: |
+            lv_port_linux/screenshot.png
+            lv_port_linux/dashboard_startup.gif
           if-no-files-found: warn
 
