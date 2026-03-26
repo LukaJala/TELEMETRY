@@ -180,3 +180,12 @@ jobs:
           wait $XVFB_PID 2>/dev/null || true
 
           [ -f screenshot.png ] && identify screenshot.png || echo "❌ No screenshot produced"
+
+      - name: Upload screenshot artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: lvgl-screenshot
+          path: lv_port_linux/screenshot.png
+          if-no-files-found: warn
+
