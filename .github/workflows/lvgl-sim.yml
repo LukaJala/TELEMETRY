@@ -62,9 +62,9 @@ jobs:
           rm -rf lv_port_linux/src/ui
           mkdir -p lv_port_linux/src/ui/
 
-          sed -i 's|\\&amp;|\\&|g; s|\\<|\\<|g; s|\\>|\\>|g' SCREEN_TEST/SCREEN_TEST/main/lvgl_demo_ui.c
+          sed -i 's|\\&amp;|\\&|g; s|\\<|\\<|g; s|\\>|\\>|g' SCREEN_TEST/SCREEN_TEST/main/ui.c
           cp SCREEN_TEST/SCREEN_TEST/main/ui.h lv_port_linux/src/ui/
-          cp SCREEN_TEST/SCREEN_TEST/main/lvgl_demo_ui.c lv_port_linux/src/ui/ui.c
+          cp SCREEN_TEST/SCREEN_TEST/main/ui.c lv_port_linux/src/ui/ui.c
           echo "✅ Copied and pre-sanitized ui.c/ui.h"
 
           python3 -c "
