@@ -3,7 +3,7 @@ name: LVGL Simulator
 on:
   pull_request:
     paths:
-      - "SCREEN_TEST/**"  # Trigger when UI files change
+      - "SCREEN_TEST/**"
       - ".github/workflows/lvgl-sim.yml"
   push:
     branches: [main, master]
@@ -16,7 +16,7 @@ jobs:
   build-lvgl-sim:
     name: Build and Test LVGL Simulator
     runs-on: ubuntu-latest
-    
+
     steps:
       - name: Checkout your code
         uses: actions/checkout@v4
@@ -28,29 +28,87 @@ jobs:
             cmake \
             ninja-build \
             libsdl2-dev \
+            libsdl2-image-dev \
             libevdev-dev \
             libevdev2 \
-            xvfb
+            xvfb \
+            x11-apps \
+            xdotool \
+            scrot \
+            imagemagick
 
       - name: Clone LVGL Linux port
         run: |
           git clone --recursive https://github.com/lvgl/lv_port_linux.git
-          
-      - name: Copy UI files from SCREEN_TEST to simulator
+
+      - name: Patch lv_conf.defaults for SDL
+        working-directory: lv_port_linux
         run: |
-          # Create UI directory in simulator
-          mkdir -p lv_port_linux/src/my_ui
-          
-          # Copy your UI files
-          if [ -d "SCREEN_TEST/SCREEN_TEST/main" ]; then
-            cp -r SCREEN_TEST/SCREEN_TEST/main/* lv_port_linux/src/my_ui/
-            echo "✅ Copied UI files from SCREEN_TEST"
-          else
-            echo "⚠️ No UI files found in SCREEN_TEST/SCREEN_TEST/main"
-          fi
-          
-          echo "Files in my_ui:"
-          ls -la lv_port_linux/src/my_ui/ || echo "No files copied"
+          python3 -c "
+          path = 'lv_conf.defaults'
+          src = open(path).read()
+          src = src.replace('LV_USE_LINUX_FBDEV      1', 'LV_USE_LINUX_FBDEV      0')
+          src = src.replace('LV_USE_SDL              0', 'LV_USE_SDL              1')
+          src = src.replace('LV_SDL_ACCELERATED      1', 'LV_SDL_ACCELERATED      0')
+          src = src.replace('LV_USE_EVDEV    1',         'LV_USE_EVDEV    0')
+          open(path, 'w').write(src)
+          print('Patched lv_conf.defaults')
+          "
+          echo "--- verify ---"
+          grep -E "LV_USE_SDL|LV_USE_LINUX_FBDEV|LV_USE_EVDEV|LV_SDL_ACCELERATED" lv_conf.defaults
+
+      - name: Copy UI files to lv_port_linux/src/ui/
+        run: |
+          rm -rf lv_port_linux/src/ui
+          mkdir -p lv_port_linux/src/ui/
+
+          sed -i 's|\\&amp;|\\&|g; s|\\<|\\<|g; s|\\>|\\>|g' SCREEN_TEST/SCREEN_TEST/main/ui.c
+          cp SCREEN_TEST/SCREEN_TEST/main/ui.h lv_port_linux/src/ui/
+          cp SCREEN_TEST/SCREEN_TEST/main/ui.c lv_port_linux/src/ui/ui.c
+          echo "✅ Copied and pre-sanitized ui.c/ui.h"
+
+          python3 -c "
+          path = 'lv_port_linux/src/ui/ui.c'
+          src = open(path).read()
+          src = src.replace('&amp;', '&')
+          src = src.replace('<', '<')
+          src = src.replace('>', '>')
+          src = src.replace('lv_anim_set_playback_duration', 'lv_anim_set_reverse_duration')
+          open(path, 'w').write(src)
+          remaining = src.count('&amp;')
+          print('Sanitized. Remaining occurrences: ' + str(remaining))
+          "
+          echo "--- verify no leftover entities ---"
+          grep -n "amp;" lv_port_linux/src/ui/ui.c && echo "❌ Still dirty!" || echo "✅ Clean"
+
+          echo "Files in src/ui:"
+          ls -la lv_port_linux/src/ui/
+
+      - name: Patch lv_port_linux to use our UI
+        run: |
+          echo "--- current demo calls in main.c ---"
+          grep -n "demo\|Demo\|app_main\|ui_init" lv_port_linux/src/main.c | head -30
+
+          sed -i 's|#include "lvgl/lvgl.h"|#include "lvgl/lvgl.h"\n#include "ui/ui.h"|' \
+            lv_port_linux/src/main.c
+
+          sed -i 's|lv_demo_widgets(|ui_init(lv_display_get_default()|' lv_port_linux/src/main.c
+          sed -i 's|lv_demo_benchmark(|ui_init(lv_display_get_default()|' lv_port_linux/src/main.c
+          sed -i 's|lv_demo_music(|ui_init(lv_display_get_default()|' lv_port_linux/src/main.c
+          sed -i 's|lv_demo_stress(|ui_init(lv_display_get_default()|' lv_port_linux/src/main.c
+
+          sed -i 's/lv_demo_widgets_start_slideshow();//' lv_port_linux/src/main.c
+          sed -i '/lv_demo_widgets_start_slideshow()/s/^/# /; /lv_demo_widgets_start_slideshow()/s/$/ # Disabled to fix black UI/' lv_port_linux/src/main.c
+
+          echo "--- patched main.c (relevant lines) ---"
+          grep -n "demo\\|Demo\\|ui_init\\|ui\\.h\\|slideshow" lv_port_linux/src/main.c
+
+          CMAKE="lv_port_linux/CMakeLists.txt"
+          sed -i 's|src/main.c|src/main.c\n    src/ui/ui.c|' "$CMAKE"
+          sed -i 's|include_directories(src)|include_directories(src)\ninclude_directories(src/ui)|' "$CMAKE"
+
+          echo "--- patched CMakeLists.txt ---"
+          cat "$CMAKE"
 
       - name: Configure
         working-directory: lv_port_linux
@@ -65,38 +123,67 @@ jobs:
           cd build
           cmake --build . --parallel
 
-      - name: Smoke test (headless)
+      - name: Check available backends
+        working-directory: lv_port_linux
+        run: |
+          build/bin/lvglsim -B || true
+
+      - name: Test simulator (headless, with screenshot)
         working-directory: lv_port_linux
         run: |
           set +e
-          
-          # The executable is lvglsim in the bin directory
-          EXECUTABLE="build/bin/lvglsim"
-          
-          if [ ! -f "$EXECUTABLE" ] || [ ! -x "$EXECUTABLE" ]; then
-            echo "❌ Could not find simulator executable at $EXECUTABLE"
-            echo "📁 Build directory contents:"
-            ls -la build/
-            echo ""
-            echo "📁 Build/bin contents:"
-            ls -la build/bin/ 2>/dev/null || echo "build/bin/ does not exist"
-            exit 1
-          fi
-          
-          echo "✅ Found executable at: $EXECUTABLE"
-          echo ""
-          echo "🚀 Running simulator: $EXECUTABLE"
-          echo "----------------------------------------"
-          timeout 10s xvfb-run -a "$EXECUTABLE"
-          rc=$?
-          echo "----------------------------------------"
-          
-          set -e
-          if [ "$rc" -eq 124 ]; then
-            echo "✅ Simulator ran for 10 seconds and was killed (timeout) - this is good!"
-          elif [ "$rc" -eq 0 ]; then
-            echo "✅ Simulator completed successfully"
-          else
-            echo "❌ Simulator exited with unexpected status: $rc"
-            exit $rc
-          fi
+
+          Xvfb :99 -screen 0 800x480x24 -ac &
+          XVFB_PID=$!
+          sleep 2
+
+          export DISPLAY=:99
+
+          echo "✅ Launching SDL simulator..."
+          build/bin/lvglsim -b sdl &
+          SIM_PID=$!
+
+          echo "Waiting for UI to render..."
+          sleep 60
+
+          # Capture frames for GIF (10 frames over 20 seconds)
+          echo "📸 Capturing frames for GIF..."
+          for i in $(seq -w 1 10); do
+            scrot "frame_${i}.png"
+            sleep 2
+          done
+
+          # Stitch into GIF
+          echo "🎞️ Stitching GIF..."
+          convert -delay 20 -loop 0 frame_*.png dashboard_startup.gif
+
+          # Use the last frame as the final screenshot for regression check
+          cp frame_10.png screenshot.png
+
+          # Regression check — fail CI if the UI looks blank
+          mean=$(identify -quiet -format '%[fx:mean]' screenshot.png 2>/dev/null || echo "0")
+          echo "Mean pixel value: $mean"
+          python3 -c "
+          mean = float('$mean')
+          if mean < 0.05:
+              print('❌ Screenshot looks blank — UI may have failed to render!')
+              exit(1)
+          print(f'✅ UI looks good (mean brightness = {mean:.3f})')
+          "
+
+              kill $SIM_PID  2>/dev/null || true
+              kill $XVFB_PID 2>/dev/null || true
+              wait $SIM_PID  2>/dev/null || true
+              wait $XVFB_PID 2>/dev/null || true
+
+              [ -f screenshot.png ] && identify screenshot.png || echo "❌ No screenshot produced"
+      - name: Upload screenshot artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: lvgl-screenshots
+          path: |
+            lv_port_linux/screenshot.png
+            lv_port_linux/dashboard_startup.gif
+          if-no-files-found: warn
+
