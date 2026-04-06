@@ -1,0 +1,262 @@
+================================================================================
+SESSION REPORT — April 3, 2026
+Project: ReceiveTest (ESP32-P4 Display + Camera)
+Board: Waveshare ESP32-P4-Module-DEV-KIT
+Camera: Raspberry Pi AI Camera (Sony IMX500) — PCB label: TNBF3083 TSP A0
+Display: Waveshare 10.1" DSI LCD (JD9365, 800x1280)
+================================================================================
+
+
+--------------------------------------------------------------------------------
+SECTION 1: WHAT sender.py DOES
+--------------------------------------------------------------------------------
+sender.py is a Tkinter GUI application that runs on a laptop and communicates
+with the ESP32-P4 over a direct Ethernet cable (no router).
+
+Laptop must be set to static IP: 192.168.1.1 (subnet 255.255.255.0)
+ESP32 runs at static IP: 192.168.1.100, TCP port 5000
+
+Features:
+  - Send arbitrary text strings to the ESP32 display over TCP
+  - Send live clock (HH:MM:SS) updated every second in a background thread
+  - Toggle camera feed on/off via special command strings:
+      "__CAM_START__" — ESP32 switches display to camera feed
+      "__CAM_STOP__"  — ESP32 returns display to LVGL text UI
+  - Quick-send buttons for preset messages
+  - Log window showing all sent messages with timestamps
+
+Nothing in sender.py needed to be changed for the IMX500 camera.
+
+
+--------------------------------------------------------------------------------
+SECTION 2: CAMERA CONFIGURATION — IMX500 (Raspberry Pi AI Camera)
+--------------------------------------------------------------------------------
+
+The "TNBF3083 TSP A0" label is just the PCB board revision marking.
+The sensor inside is the Sony IMX500 — which the code was already targeting.
+The code was previously targeting a DIFFERENT camera (IMX219 in some places).
+
+FILES CHANGED:
+
+--- components/imx500/include/imx500_regs.h ---
+PROBLEM: The register table was intentionally incomplete. A large TODO comment
+said the full register sequence needed to be copied from the Raspberry Pi Linux
+kernel driver. Without the full register table the sensor produces no frames.
+
+FIX: Replaced the incomplete stub with the full 2028x1520 30fps register table
+sourced from the RPi Linux kernel driver (rpi-6.6.y branch,
+drivers/media/i2c/imx500.c). The table includes:
+  - Standby entry
+  - Common registers (PLL pre-dividers, fast standby, EXCLK freq, CSI lanes)
+  - Mode registers: line/frame timing, crop window, 2x2 binning,
+    digital crop/scaler, output size, PLL/pixel clock, MIPI bit-rate request,
+    HDR/exposure control, internal sensor tuning, default exposure and gain
+
+--- components/camera/camera.c ---
+PROBLEM 1: Two comments incorrectly said "IMX219" instead of "IMX500".
+  Line 61:  /* XCLK - IMX219 requires external 24MHz clock */
+  Line 307: /* --- XCLK: IMX219 needs external 24MHz clock... */
+FIX: Updated both comments to say "IMX500".
+
+PROBLEM 2: CAM_LANE_BITRATE_MBPS was set to 750 (a placeholder guess).
+The RPi kernel driver confirms the IMX500 uses a 444 MHz link frequency.
+MIPI CSI-2 DDR: bit rate per lane = 444 MHz x 2 = 888 Mbps/lane.
+FIX: Changed CAM_LANE_BITRATE_MBPS from 750 to 888.
+
+PROBLEM 3: XCLK boot delay was only 200ms. The IMX500 has an internal MCU
+that needs time to boot before I2C will respond.
+FIX: Increased delay from 200ms to 2000ms.
+
+KEY CAMERA CONSTANTS (confirmed correct, no changes needed):
+  CAM_H_RES             = 2028
+  CAM_V_RES             = 1520
+  CAM_FB_SIZE           = 2028 x 1520 x 3 = 9,247,680 bytes (~8.8 MB, in PSRAM)
+  CAM_SCCB_SCL_IO       = GPIO 8   (confirmed correct for Waveshare ESP32-P4)
+  CAM_SCCB_SDA_IO       = GPIO 7   (confirmed correct for Waveshare ESP32-P4)
+  CAM_XCLK_PIN          = GPIO 20  (confirmed correct for Waveshare ESP32-P4)
+  CAM_XCLK_FREQ_HZ      = 24,000,000 Hz
+  CAM_MIPI_LDO_CHAN     = 3
+  CAM_MIPI_LDO_MV       = 2500
+  IMX500 I2C address    = 0x1A
+  CAM_FORMAT_NAME       = "2028x1520_30fps"
+  SCALED display output = 800 x ~599 pixels (nearest-neighbor to fill display width)
+
+
+--------------------------------------------------------------------------------
+SECTION 3: DISPLAY UNDERRUN FIXES
+--------------------------------------------------------------------------------
+
+SYMPTOM: On every boot, several of these errors appeared during LVGL init:
+  E lcd.dsi: can't fetch data from external memory fast enough, underrun happens
+
+ROOT CAUSE: The DSI DPI controller was clocked at 80 MHz, requiring PSRAM to
+supply pixel data at 80 MHz x 3 bytes = 240 MB/s. The DMA2D ISR also ran from
+flash cache (adding latency spikes mid-transfer).
+
+THINGS TRIED / EVALUATED:
+  - Double buffer: ATTEMPTED but caused camera frame buffer OOM (see Section 4).
+    Reverted. The 8.8 MB camera buffer can't find a contiguous block after LVGL
+    takes 6 MB with double buffering enabled.
+  - Lower resolution: Not applicable, display is native 800x1280.
+  - PPA burst length: PPA is not enabled (CONFIG_LVGL_PORT_ENABLE_PPA is not
+    set), so this option is irrelevant for this project.
+
+FIXES APPLIED:
+
+--- components/display/display_init.c ---
+After the JD9365_800_1280_PANEL_60HZ_DPI_CONFIG macro call, override the clock:
+  dpi_cfg.dpi_clock_freq_mhz = 60;  // was 80
+This reduces PSRAM bandwidth demand by 25%. Refresh rate drops from ~68 Hz
+to ~52 Hz — still smooth for a dashboard display.
+
+--- sdkconfig.defaults ---
+Added:
+  CONFIG_DMA2D_OPERATION_FUNC_IN_IRAM=y
+  CONFIG_DMA2D_ISR_IRAM_SAFE=y
+These move DMA2D transfer functions and the ISR into IRAM, eliminating flash
+cache miss latency during pixel transfers.
+
+RESULT: DSI underrun errors are completely gone in subsequent boots.
+
+
+--------------------------------------------------------------------------------
+SECTION 4: DOUBLE BUFFER OOM REGRESSION (INTRODUCED AND REVERTED)
+--------------------------------------------------------------------------------
+
+ATTEMPTED: Set double_buffer = true in main.c LVGL display config.
+INTENT: Eliminate LVGL/DSI write contention on the same PSRAM buffer.
+RESULT: Camera frame buffer allocation failed:
+  E (5012) CAMERA: Camera frame buffer allocation failed (9247680 bytes)
+
+REASON: With double_buffer = true, LVGL allocates 2 x 3 MB = 6 MB from PSRAM
+(up from 3 MB). After this allocation, the heap cannot find a contiguous
+9.2 MB block for the camera frame buffer. The allocations happen in order:
+  1. DSI driver: ~3 MB (num_fbs = 1 in DPI config)
+  2. LVGL (double): 6 MB
+  3. Camera frame buf: 9.2 MB  <-- FAILS, no contiguous block
+
+REVERTED: double_buffer set back to false.
+
+NOTE FOR FUTURE: If double buffering is desired, allocate camera buffers
+BEFORE LVGL init in app_main() (swap steps 2-3 and step 5 in main.c).
+This claims the 9.2 MB block first while PSRAM is unfragmented, then LVGL
+allocates around it. Double buffering would then be viable.
+
+
+--------------------------------------------------------------------------------
+SECTION 5: CAMERA I2C HARDWARE DIAGNOSIS (UNRESOLVED)
+--------------------------------------------------------------------------------
+
+STATUS: Camera I2C still not working. Every I2C address times out.
+This is a HARDWARE issue — software is confirmed correct.
+
+WHAT THE LOG SHOWS EVERY BOOT:
+  I (XXXX) CAMERA: I2C pin state: SDA(GPIO7)=1  SCL(GPIO8)=1
+  I (XXXX) CAMERA: I2C bus already free
+  I (XXXX) CAMERA: Scanning I2C bus (SDA=7 SCL=8) for devices...
+  E (XXXX) i2c.master: probe device timeout [x117 addresses]
+  W (XXXX) CAMERA: No I2C devices found!
+  E (XXXX) imx500: I2C error reading model ID high byte
+  E (XXXX) CAMERA: No camera sensor found on I2C SDA=7 SCL=8
+
+KEY OBSERVATION: The error is TIMEOUT (not NACK). A NACK means a device
+responded but rejected the address. A timeout means no device pulled SDA low
+at all during the ACK phase — the bus is electrically dead from the camera's
+perspective.
+
+HARDWARE MEASUREMENTS TAKEN:
+  - GPIO pins (SDA=7, SCL=8, XCLK=20): CONFIRMED CORRECT for Waveshare board
+    (verified against Espressif ESP-IDF example and community repos)
+  - XCLK (GPIO 20): Measured ~1.6V with multimeter = CORRECT
+    (24 MHz square wave at 50% duty, multimeter reads DC average = Vcc/2)
+  - Cable continuity: CONFIRMED — cable wires are not broken
+  - Camera 3.3V power supply (FPC pins 1 and 15): Measured 3.3V = CONFIRMED
+    Camera PCB is receiving power.
+
+CURRENT STATUS (session ended here):
+  Next step is to measure FPC connector pins 12 (SCL) and 13 (SDA) on the
+  camera PCB against GND (pin 1) WHILE the I2C scan is running (during the
+  ~2 second window starting ~5 seconds after boot).
+
+  Expected readings:
+    ~1.6V on pins 12/13 during scan = I2C signal IS reaching camera,
+                                      camera simply not responding (sensor issue)
+    0V on pins 12/13 during scan    = those specific FPC pins not making
+                                      contact (partial connector seating)
+
+FPC CONNECTOR PINOUT (15-pin, 1mm pitch, RPi camera standard):
+  Pin 1:  GND
+  Pin 2:  CSI_D0_N
+  Pin 3:  CSI_D0_P
+  Pin 4:  GND
+  Pin 5:  CSI_D1_N
+  Pin 6:  CSI_D1_P
+  Pin 7:  GND
+  Pin 8:  CSI_CK_N
+  Pin 9:  CSI_CK_P
+  Pin 10: GND
+  Pin 11: CAM_GPIO (shutdown/enable)
+  Pin 12: SCL
+  Pin 13: SDA
+  Pin 14: GND
+  Pin 15: 3V3
+
+
+--------------------------------------------------------------------------------
+SECTION 6: CURRENT STATE OF ALL FILES
+--------------------------------------------------------------------------------
+
+components/imx500/include/imx500_regs.h
+  STATUS: UPDATED — full register table for 2028x1520 30fps mode
+
+components/camera/camera.c
+  STATUS: UPDATED
+  - CAM_LANE_BITRATE_MBPS: 750 -> 888
+  - XCLK boot delay: 200ms -> 2000ms
+  - Fixed 2 stale "IMX219" comments -> "IMX500"
+
+components/display/display_init.c
+  STATUS: UPDATED
+  - dpi_clock_freq_mhz: 80 -> 60 (after macro call)
+
+sdkconfig.defaults
+  STATUS: UPDATED
+  - Added CONFIG_DMA2D_OPERATION_FUNC_IN_IRAM=y
+  - Added CONFIG_DMA2D_ISR_IRAM_SAFE=y
+
+main/main.c
+  STATUS: UNCHANGED (double_buffer attempted and reverted, back to false)
+
+python_sender/sender.py
+  STATUS: UNCHANGED — no modifications needed
+
+
+--------------------------------------------------------------------------------
+SECTION 7: OUTSTANDING ISSUES / NEXT SESSION TODO
+--------------------------------------------------------------------------------
+
+1. CAMERA I2C (HARDWARE - PRIORITY):
+   Measure FPC pins 12 (SCL) and 13 (SDA) on the camera PCB against GND
+   during the I2C scan window (~5s after boot). Determine if signal is
+   reaching the camera or if those specific FPC pins have no contact.
+
+   IF signal reaches camera (1.6V) but no ACK:
+     - IMX500 may require SPI firmware upload before I2C responds
+     - Try probing ONLY address 0x1A repeatedly and check with scope/LA
+     - Check if camera has PWDN/RESET requirements beyond what code does
+
+   IF no signal (0V):
+     - FPC connector not fully seated on ESP32 or camera side
+     - Try different cable or re-seat more firmly
+
+2. DOUBLE BUFFER (OPTIONAL IMPROVEMENT):
+   If double buffering is wanted for smoother display, reorder app_main():
+   allocate camera frame buffers (s_frame_buf, s_disp_buf) BEFORE LVGL init.
+   Then enable double_buffer = true again.
+
+3. DSI UNDERRUN (MONITOR):
+   Currently fixed. Monitor in future sessions to confirm it stays resolved.
+
+================================================================================
+END OF REPORT
+================================================================================

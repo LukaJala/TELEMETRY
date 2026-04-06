@@ -23,6 +23,10 @@ import threading
 ESP32_IP = "192.168.1.100"
 ESP32_PORT = 5000
 
+# Commands that the ESP32 recognizes for camera control
+CMD_CAM_START = "__CAM_START__"
+CMD_CAM_STOP  = "__CAM_STOP__"
+
 # ============================================================
 # MAIN APPLICATION CLASS
 # ============================================================
@@ -30,11 +34,12 @@ class SenderApp:
     def __init__(self, root):
         self.root = root
         self.root.title("ESP32 Data Sender")
-        self.root.geometry("400x350")
+        self.root.geometry("400x420")
 
         self.socket = None
         self.connected = False
         self.sending_time = False
+        self.camera_active = False
 
         self.create_widgets()
 
@@ -76,6 +81,18 @@ class SenderApp:
 
         self.time_label = ttk.Label(time_frame, text="--:--:--")
         self.time_label.pack(side="left", padx=10)
+
+        # --------------------------------------------------------
+        # Camera Frame
+        # --------------------------------------------------------
+        cam_frame = ttk.LabelFrame(self.root, text="Camera", padding=10)
+        cam_frame.pack(fill="x", padx=10, pady=5)
+
+        self.cam_btn = ttk.Button(cam_frame, text="Start Camera", command=self.toggle_camera)
+        self.cam_btn.pack(side="left", padx=5)
+
+        self.cam_status = ttk.Label(cam_frame, text="Off", foreground="gray")
+        self.cam_status.pack(side="left", padx=10)
 
         # --------------------------------------------------------
         # Quick Buttons Frame
@@ -129,6 +146,10 @@ class SenderApp:
     def disconnect(self):
         """Close TCP connection"""
         self.sending_time = False
+
+        # Stop camera if active before disconnecting
+        if self.camera_active:
+            self._set_camera_active(False)
 
         if self.socket:
             try:
@@ -194,6 +215,30 @@ class SenderApp:
             time.sleep(1)
 
         self.root.after(0, lambda: self.time_btn.config(text="Start Sending Time"))
+
+    def toggle_camera(self):
+        """Switch display between camera feed and sender mode"""
+        if self.camera_active:
+            # Send stop command - ESP32 will return display to text UI
+            if self.send(CMD_CAM_STOP):
+                self._set_camera_active(False)
+        else:
+            if not self.connected:
+                self.log("Connect first!")
+                return
+            # Send start command - ESP32 will switch display to camera feed
+            if self.send(CMD_CAM_START):
+                self._set_camera_active(True)
+
+    def _set_camera_active(self, active):
+        """Update camera button and status label"""
+        self.camera_active = active
+        if active:
+            self.cam_btn.config(text="Stop Camera")
+            self.cam_status.config(text="Live", foreground="green")
+        else:
+            self.cam_btn.config(text="Start Camera")
+            self.cam_status.config(text="Off", foreground="gray")
 
 # ============================================================
 # MAIN

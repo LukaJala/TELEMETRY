@@ -26,3 +26,11 @@ CONFIG_LV_FONT_MONTSERRAT_48=y
 
 # Stack size
 CONFIG_ESP_MAIN_TASK_STACK_SIZE=8192
+
+# Camera sensor driver
+CONFIG_CAMERA_OV5647=y
+
+# DMA2D: keep ISR and operation funcs in IRAM to prevent stalls
+# during DSI pixel transfers (eliminates flash cache miss latency)
+CONFIG_DMA2D_OPERATION_FUNC_IN_IRAM=y
+CONFIG_DMA2D_ISR_IRAM_SAFE=y

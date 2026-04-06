@@ -12,19 +12,39 @@
 #include "display_config.h"
 #include "ui.h"
 #include "network.h"
+#include "camera.h"
 
 static const char *TAG = "ReceiveTest";
 
-/* 
+/* Panel handle stored globally so the data callback can pass it to camera */
+static esp_lcd_panel_handle_t s_panel = NULL;
+
+/* Commands sent from sender.py to control camera mode */
+#define CMD_CAM_START   "__CAM_START__"
+#define CMD_CAM_STOP    "__CAM_STOP__"
+
+/*
  * DATA CALLBACK
  * Called by network component when TCP data arrives
  **/
 static void on_data_received(const char *data, int length)
 {
-    ESP_LOGI(TAG, "Updating display with: %s", data);
+    if (strcmp(data, CMD_CAM_START) == 0) {
+        ESP_LOGI(TAG, "Camera start command received");
+        if (camera_start(s_panel) != ESP_OK) {
+            ui_set_text("Camera unavailable");
+        }
 
-    /* Update the main display with received data */
-    ui_set_text(data);
+    } else if (strcmp(data, CMD_CAM_STOP) == 0) {
+        ESP_LOGI(TAG, "Camera stop command received");
+        camera_stop();
+        /* Restore the UI now that LVGL has the display back */
+        ui_set_text("Waiting...");
+
+    } else {
+        ESP_LOGI(TAG, "Updating display with: %s", data);
+        ui_set_text(data);
+    }
 }
 
 // MAIN ENTRY POINT
@@ -32,13 +52,13 @@ void app_main(void)
 {
     ESP_LOGI(TAG, "Starting ReceiveTest");
 
-    /* 
+    /*
      * Step 1: Initialize display hardware
      * - Turns on backlight
      * - Configures MIPI DSI interface
-     * - Returns panel handle for LVGL
+     * - Returns panel handle for LVGL and camera
      **/
-    esp_lcd_panel_handle_t panel = display_init();
+    s_panel = display_init();
 
     /*
      * Step 2: Initialize LVGL graphics library
@@ -54,7 +74,7 @@ void app_main(void)
      **/
     lv_display_t *disp = lvgl_port_add_disp_dsi(
         &(lvgl_port_display_cfg_t){
-            .panel_handle = panel,
+            .panel_handle = s_panel,
             .buffer_size = LCD_H_RES * LCD_V_RES * 3,
             .double_buffer = false,
             .hres = LCD_H_RES,
@@ -67,7 +87,7 @@ void app_main(void)
 
     lv_display_set_rotation(disp, LV_DISPLAY_ROTATION_90);
 
-    /* 
+    /*
      * Step 4: Initialize UI
      * - Creates title label
      * - Creates data label (updated when data arrives)
@@ -76,7 +96,16 @@ void app_main(void)
     ui_init(disp);
 
     /*
-     * Step 5: Initialize network
+     * Step 5: Initialize camera (IMX219 via MIPI CSI)
+     * - Sets up I2C/SCCB, CSI controller, and ISP
+     * - Does not start streaming yet
+     **/
+    if (camera_init() != ESP_OK) {
+        ESP_LOGW(TAG, "Camera init failed - camera mode will not be available");
+    }
+
+    /*
+     * Step 6: Initialize network
      * - Sets up Ethernet with static IP (192.168.1.100)
      * - Starts TCP server on port 5000
      * - Calls on_data_received() when data arrives
@@ -95,6 +124,7 @@ void app_main(void)
      * All the work happens in background tasks:
      * - LVGL task handles rendering
      * - TCP server task handles network
+     * - Camera stream task handles camera (when active)
      **/
     while (1) {
         vTaskDelay(pdMS_TO_TICKS(1000));

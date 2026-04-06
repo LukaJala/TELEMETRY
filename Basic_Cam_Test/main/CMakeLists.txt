@@ -1,0 +1,16 @@
+idf_component_register(
+    SRCS
+        "main.c"
+    INCLUDE_DIRS
+        "."
+    REQUIRES
+        esp_driver_cam
+        esp_driver_isp
+        driver
+        esp_lcd
+        esp_hw_support
+        esp_mm
+        display
+        espressif__esp_cam_sensor
+        espressif__esp_sccb_intf
+)

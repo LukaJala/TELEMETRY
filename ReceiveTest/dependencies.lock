@@ -9,6 +9,31 @@ dependencies:
       registry_url: https://components.espressif.com
       type: service
     version: 0.5.3
+  espressif/esp_cam_sensor:
+    component_hash: 902c305b77f7c42b60fff5a084e397694f8a3fd6e6b72299996a7c856666e983
+    dependencies:
+    - name: espressif/cmake_utilities
+      registry_url: https://components.espressif.com
+      require: private
+      version: 0.*
+    - name: espressif/esp_sccb_intf
+      registry_url: https://components.espressif.com
+      require: private
+      version: '>=0.0.5'
+    - name: idf
+      require: private
+      version: '>=5.3'
+    source:
+      registry_url: https://components.espressif.com/
+      type: service
+    targets:
+    - esp32p4
+    - esp32s3
+    - esp32c3
+    - esp32c5
+    - esp32c6
+    - esp32c61
+    version: 2.0.1
   espressif/esp_lvgl_port:
     component_hash: f872401524cb645ee6ff1c9242d44fb4ddcfd4d37d7be8b9ed3f4e85a404efcd
     dependencies:
@@ -23,8 +48,18 @@ dependencies:
       registry_url: https://components.espressif.com/
       type: service
     version: 2.7.0
+  espressif/esp_sccb_intf:
+    component_hash: c071b189e49f40940722aea01a5489f873385cc39cd5b14012341135b85d1a9d
+    dependencies:
+    - name: idf
+      require: private
+      version: '>=5.3'
+    source:
+      registry_url: https://components.espressif.com
+      type: service
+    version: 0.0.8
   espressif/i2c_bus:
-    component_hash: 4e990dc11734316186b489b362c61d41f23f79d58bc169795cec215e528cba14
+    component_hash: 804ec068d163570fd367b279a310ca383484630d2310c586b50def0bcf21de13
     dependencies:
     - name: espressif/cmake_utilities
       registry_url: https://components.espressif.com
@@ -36,7 +71,7 @@ dependencies:
     source:
       registry_url: https://components.espressif.com
       type: service
-    version: 1.5.0
+    version: 1.5.1
   idf:
     source:
       type: idf
@@ -69,10 +104,11 @@ dependencies:
     - esp32p4
     version: 1.0.4
 direct_dependencies:
+- espressif/esp_cam_sensor
 - espressif/esp_lvgl_port
 - idf
 - lvgl/lvgl
 - waveshare/esp_lcd_jd9365_10_1
-manifest_hash: 133abf29026f64449f4482111405c98c16a86fbc1d2c024908d1ef689324a73d
+manifest_hash: 0fd67569c8f43da254c12d03eafda2b5290ff0063108e09606fd31141aef3c85
 target: esp32p4
 version: 2.0.0

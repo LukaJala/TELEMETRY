@@ -5,6 +5,7 @@ idf_component_register(
         display
         ui
         network
+        camera
         esp_lvgl_port
         lvgl
 )

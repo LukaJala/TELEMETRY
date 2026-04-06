@@ -18,7 +18,7 @@
 #include "freertos/task.h"
 #include "driver/gpio.h"
 #include "esp_lcd_jd9365_10_1.h"
-#include "i2c_bus.h"
+#include "driver/i2c_master.h"
 
 
 #define JD9365_CMD_PAGE (0xE0)
@@ -121,30 +121,38 @@ esp_err_t esp_lcd_new_panel_jd9365(const esp_lcd_panel_io_handle_t io, const esp
     jd9365->reset_gpio_num = panel_dev_config->reset_gpio_num;
     jd9365->flags.reset_level = panel_dev_config->flags.reset_active_high;
 
-    i2c_config_t conf = {
-        .mode = I2C_MODE_MASTER,
+    i2c_master_bus_handle_t panel_i2c_bus = NULL;
+    i2c_master_bus_config_t panel_i2c_cfg = {
+        .clk_source = I2C_CLK_SRC_DEFAULT,
         .sda_io_num = 7,
-        .sda_pullup_en = GPIO_PULLUP_ENABLE,
         .scl_io_num = 8,
-        .scl_pullup_en = GPIO_PULLUP_ENABLE,
-        .master.clk_speed = 100000,
+        .i2c_port = I2C_NUM_1,
+        .glitch_ignore_cnt = 7,
+        .flags.enable_internal_pullup = true,
     };
+    i2c_new_master_bus(&panel_i2c_cfg, &panel_i2c_bus);
 
-    i2c_bus_handle_t i2c0_bus = i2c_bus_create(I2C_NUM_1, &conf);
-    i2c_bus_device_handle_t i2c0_device1 = i2c_bus_device_create(i2c0_bus, 0x45, 0);
+    i2c_master_dev_handle_t panel_i2c_dev = NULL;
+    i2c_device_config_t panel_dev_i2c_cfg = {
+        .dev_addr_length = I2C_ADDR_BIT_LEN_7,
+        .device_address = 0x45,
+        .scl_speed_hz = 100000,
+    };
+    i2c_master_bus_add_device(panel_i2c_bus, &panel_dev_i2c_cfg, &panel_i2c_dev);
 
-    uint8_t data = 0x11;
-    i2c_bus_write_bytes(i2c0_device1, 0x95, 1, &data);
-    data = 0x17;
-    i2c_bus_write_bytes(i2c0_device1, 0x95, 1, &data);
-    data = 0x00;
-    i2c_bus_write_bytes(i2c0_device1, 0x96, 1, &data);
+    uint8_t wr_buf[2];
+    wr_buf[0] = 0x95; wr_buf[1] = 0x11;
+    i2c_master_transmit(panel_i2c_dev, wr_buf, sizeof(wr_buf), 100);
+    wr_buf[1] = 0x17;
+    i2c_master_transmit(panel_i2c_dev, wr_buf, sizeof(wr_buf), 100);
+    wr_buf[0] = 0x96; wr_buf[1] = 0x00;
+    i2c_master_transmit(panel_i2c_dev, wr_buf, sizeof(wr_buf), 100);
     vTaskDelay(pdMS_TO_TICKS(100));
-    data = 0xFF;
-    i2c_bus_write_bytes(i2c0_device1, 0x96, 1, &data);
+    wr_buf[1] = 0xFF;
+    i2c_master_transmit(panel_i2c_dev, wr_buf, sizeof(wr_buf), 100);
 
-    i2c_bus_device_delete(&i2c0_device1);
-    // i2c_bus_delete(&i2c0_bus);
+    i2c_master_bus_rm_device(panel_i2c_dev);
+    i2c_del_master_bus(panel_i2c_bus);
 
     vTaskDelay(pdMS_TO_TICKS(1000));
 

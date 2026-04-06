@@ -1,0 +1,234 @@
+#include <string.h>
+#include <math.h>
+#include <stdlib.h>
+#include "imx219.h"
+#include "imx219_regs.h"
+#include "esp_log.h"
+#include "esp_cam_sensor.h"
+#include "esp_cam_sensor_detect.h"
+#include "esp_sccb_intf.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+
+static const char *TAG = "imx219";
+
+#define IMX219_PID 0x0219
+
+static const esp_cam_sensor_format_t imx219_format_1080p;
+
+void imx219_force_link(void) {
+    // This function exists only to force the linker to include this object file
+}
+
+// Helper to write registers
+static esp_err_t imx219_write_reg(esp_cam_sensor_device_t *dev, uint16_t reg, uint8_t val) {
+    return esp_sccb_transmit_reg_a16v8(dev->sccb_handle, reg, val);
+}
+
+// Set format (Resolution/FPS)
+static esp_err_t imx219_set_format(esp_cam_sensor_device_t *dev, const esp_cam_sensor_format_t *format) {
+    ESP_LOGI(TAG, "imx219_set_format called. Dev: %p, Fmt: %p", dev, format);
+    
+    if (!dev) {
+        ESP_LOGE(TAG, "Dev is NULL!");
+        return ESP_ERR_INVALID_ARG;
+    }
+    if (!format) {
+        ESP_LOGW(TAG, "Format is NULL! Attempting fallback...");
+        if (dev->cur_format) {
+             ESP_LOGW(TAG, "Using dev->cur_format as fallback");
+             format = dev->cur_format;
+        } else {
+             ESP_LOGW(TAG, "Using static default as fallback");
+             format = &imx219_format_1080p;
+        }
+    }
+
+    ESP_LOGI(TAG, "Setting format: %s, MIPI Clk: %lu", format->name ? format->name : "NULL Name", format->mipi_info.mipi_clk);
+    
+    // Apply the big register table
+    int num_regs = sizeof(imx219_1080p_30fps) / sizeof(imx219_reg_t);
+    for (int i = 0; i < num_regs; i++) {
+        if (imx219_write_reg(dev, imx219_1080p_30fps[i].reg, imx219_1080p_30fps[i].val) != ESP_OK) {
+            ESP_LOGE(TAG, "Failed to write reg 0x%04X", imx219_1080p_30fps[i].reg);
+            return ESP_FAIL;
+        }
+    }
+    
+    // Update current format in device struct
+    dev->cur_format = format;
+    return ESP_OK;
+}
+// Helper to read registers
+static esp_err_t imx219_read_reg(esp_cam_sensor_device_t *dev, uint16_t reg, uint8_t *val) {
+    return esp_sccb_transmit_receive_reg_a16v8(dev->sccb_handle, reg, val);
+}
+
+// IOCTL for stream control
+static esp_err_t imx219_ioctl(esp_cam_sensor_device_t *dev, uint32_t cmd, void *arg) {
+    int ret = ESP_OK;
+    switch (cmd) {
+        case ESP_CAM_SENSOR_IOC_S_STREAM:
+            {
+                int stream_on = *(int *)arg;
+                ESP_LOGI(TAG, "Stream Control: %d", stream_on);
+                
+                // Write stream register
+                ret = imx219_write_reg(dev, 0x0100, stream_on ? 0x01 : 0x00);
+                if (ret != ESP_OK) {
+                    ESP_LOGE(TAG, "Failed to write stream register!");
+                    return ret;
+                }
+                
+                // Wait for sensor to start streaming
+                vTaskDelay(pdMS_TO_TICKS(100));
+                
+                // Read back to verify
+                uint8_t reg_val = 0;
+                ret = imx219_read_reg(dev, 0x0100, &reg_val);
+                if (ret == ESP_OK) {
+                    ESP_LOGI(TAG, "Stream register 0x0100 read back: 0x%02X (expected: 0x%02X)", 
+                             reg_val, stream_on ? 0x01 : 0x00);
+                    if (reg_val != (stream_on ? 0x01 : 0x00)) {
+                        ESP_LOGE(TAG, "Stream register mismatch! Sensor may not be streaming.");
+                    }
+                } else {
+                    ESP_LOGE(TAG, "Failed to read back stream register!");
+                }
+            }
+            break;
+        default:
+            break;
+    }
+    return ret;
+}
+
+static const esp_cam_sensor_format_t imx219_format_1080p = {
+    .name = "800x1232_30fps",
+    .format = ESP_CAM_SENSOR_PIXFORMAT_RAW10,
+    .port = ESP_CAM_SENSOR_MIPI_CSI,
+    .width = 800,
+    .height = 1232,
+    .mipi_info = {
+        .mipi_clk = 456000000, 
+        .lane_num = 2,
+        .hs_settle = 0,
+    }
+};
+
+static esp_err_t imx219_get_format(esp_cam_sensor_device_t *dev, esp_cam_sensor_format_t *format) {
+    ESP_LOGI(TAG, "imx219_get_format called");
+    if (dev->cur_format) {
+        memcpy(format, dev->cur_format, sizeof(esp_cam_sensor_format_t));
+        return ESP_OK;
+    }
+    // Fallback to default if not set
+    memcpy(format, &imx219_format_1080p, sizeof(esp_cam_sensor_format_t));
+    return ESP_OK;
+}
+
+static esp_err_t imx219_query_support_formats(esp_cam_sensor_device_t *dev, esp_cam_sensor_format_array_t *parry) {
+    parry->count = 1;
+    parry->format_array = &imx219_format_1080p;
+    return ESP_OK;
+}
+
+// Stub for parameter value retrieval
+// Parameter value retrieval
+static int imx219_get_para_value(esp_cam_sensor_device_t *dev, uint32_t id, void *arg, size_t size) {
+    if (!arg) return ESP_ERR_INVALID_ARG;
+
+    switch (id) {
+        case ESP_CAM_SENSOR_DATA_SEQ: // 0x20014
+             // Verify arg size
+             if (size != sizeof(int)) return ESP_ERR_INVALID_ARG;
+             *(int *)arg = ESP_CAM_SENSOR_DATA_SEQ_NONE;
+             return ESP_OK;
+        
+        default:
+             ESP_LOGW(TAG, "get_para_value called with ID: %lu (0x%X)", id, id);
+             return ESP_ERR_NOT_SUPPORTED;
+    }
+}
+
+// Stop stream and clean up
+static int imx219_del(esp_cam_sensor_device_t *dev) {
+    ESP_LOGI(TAG, "imx219_del called");
+    if (dev) {
+        // Stop streaming
+        imx219_write_reg(dev, 0x0100, 0x00);
+        
+        if (dev->cur_format) {
+            // Free any dynamic allocations if we had them (none here)
+        }
+        // Use free(dev) if it was malloced by separate logic, but here it's part of detection?
+        // Usually detect allocates it. 
+        // For now just stop stream.
+        free(dev);
+    }
+    return ESP_OK;
+}
+
+// Manually set Analog Gain (0x00-0xFF)
+esp_err_t imx219_set_gain(esp_cam_sensor_device_t *dev, uint8_t gain) {
+    if (!dev) return ESP_ERR_INVALID_ARG;
+    return imx219_write_reg(dev, 0x0157, gain);
+}
+
+// Manually set Exposure (Lines)
+esp_err_t imx219_set_exposure(esp_cam_sensor_device_t *dev, uint16_t exposure) {
+    if (!dev) return ESP_ERR_INVALID_ARG;
+    esp_err_t ret = imx219_write_reg(dev, 0x015A, (exposure >> 8) & 0xFF);
+    if (ret != ESP_OK) return ret;
+    return imx219_write_reg(dev, 0x015B, exposure & 0xFF);
+}
+
+static const esp_cam_sensor_ops_t imx219_ops = {
+    .query_support_formats = imx219_query_support_formats,
+    .set_format = imx219_set_format,
+    .get_format = imx219_get_format,
+    .get_para_value = imx219_get_para_value,
+    .priv_ioctl = imx219_ioctl,
+    .del = imx219_del,
+};
+
+// Global reference for manual control Hack
+static esp_cam_sensor_device_t *s_imx219_dev_global = NULL;
+
+esp_cam_sensor_device_t *imx219_get_global_dev(void) {
+    return s_imx219_dev_global;
+}
+
+// Main detection function registered via macro
+ESP_CAM_SENSOR_DETECT_FN(imx219, ESP_CAM_SENSOR_MIPI_CSI, IMX219_I2C_ADDR) {
+    esp_cam_sensor_config_t *sens_config = (esp_cam_sensor_config_t *)config;
+    esp_sccb_io_handle_t sccb_handle = sens_config->sccb_handle;
+
+    /*
+     * Verify the IMX219 is present by writing the software reset register.
+     * If this fails, the camera is not connected or I2C is broken.
+     */
+    esp_err_t ret = esp_sccb_transmit_reg_a16v8(sccb_handle, 0x0103, 0x01);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "IMX219 not responding at 0x%02X (err=%d) — check cable/power",
+                 IMX219_I2C_ADDR, ret);
+        return NULL;
+    }
+    ESP_LOGI(TAG, "IMX219 at 0x%02X — software reset OK", IMX219_I2C_ADDR);
+    vTaskDelay(pdMS_TO_TICKS(10));
+
+    esp_cam_sensor_device_t *dev = calloc(1, sizeof(esp_cam_sensor_device_t));
+    if (!dev) return NULL;
+
+    dev->name = "IMX219";
+    dev->id.pid = IMX219_PID;
+    dev->ops = &imx219_ops;
+    dev->sensor_port = ESP_CAM_SENSOR_MIPI_CSI;
+    dev->sccb_handle = sccb_handle;
+    dev->cur_format = &imx219_format_1080p;
+
+    s_imx219_dev_global = dev;
+
+    ESP_LOGI(TAG, "Device allocated at: %p", dev);
+    return dev;
+}

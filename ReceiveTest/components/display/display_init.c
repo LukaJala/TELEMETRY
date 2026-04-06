@@ -54,6 +54,9 @@ esp_lcd_panel_handle_t display_init(void)
     /* Panel configuration */
     esp_lcd_dpi_panel_config_t dpi_cfg =
         JD9365_800_1280_PANEL_60HZ_DPI_CONFIG(MIPI_DPI_PX_FORMAT);
+    /* Reduce pixel clock from 80→60 MHz to ease PSRAM bandwidth pressure.
+     * Refresh rate drops from ~68 Hz to ~52 Hz — still smooth. */
+    dpi_cfg.dpi_clock_freq_mhz = 60;
 
     jd9365_vendor_config_t vendor_cfg = {
         .flags = {

@@ -1,0 +1,91 @@
+Basic_Cam_Test — How It Works
+==============================
+
+Hardware
+--------
+- MCU:     ESP32-P4 (Waveshare ESP32-P4-Module-DEV-KIT)
+- Camera:  Waveshare "Raspberry Pi Camera (B) Rev 2.0" — uses OV5647 sensor
+           (NOT IMX219 — despite the similar name to the RPi Camera Module v2)
+- Display: JD9365 10.1" LCD, 800x1280, MIPI DSI
+
+The camera is an OV5647 (I2C address 0x36). The original code assumed an
+IMX219 (address 0x10), which is why it didn't work — register writes were
+going to the wrong sensor.
+
+
+Data Pipeline
+-------------
+The image flows through hardware blocks with zero CPU involvement per frame:
+
+  OV5647 sensor (800x1280 RAW8, GBRG Bayer, 2-lane MIPI CSI, 50 fps)
+      |
+      v
+  MIPI CSI-2 receiver (ESP32-P4 CSI controller, 400 Mbps/lane)
+      |
+      v
+  ISP (on-chip Image Signal Processor — demosaics RAW8 Bayer -> RGB888)
+      |
+      v
+  DMA writes directly into the display frame buffer in PSRAM
+      |
+      v
+  MIPI DSI transmitter reads the frame buffer and drives the LCD panel
+
+Because the camera output resolution (800x1280) matches the display
+resolution exactly, no CPU scaling or copying is needed. The ISP DMA
+output lands straight in the display's frame buffer ("zero-copy").
+
+
+Startup Sequence (main.c)
+-------------------------
+1. Display init     — MIPI DSI bus, JD9365 panel, backlight on
+2. GPIO release     — The JD9365 driver briefly claims GPIO 7/8 for its
+                      backlight I2C; we reset them before camera init
+3. XCLK             — 24 MHz clock to OV5647 via ESP clock router (GPIO 20)
+4. I2C bus          — Master bus on GPIO 7 (SDA) / GPIO 8 (SCL)
+5. SCCB IO          — Camera register interface at address 0x36
+6. Sensor detect    — Auto-detect finds OV5647, reads chip ID (0x5647)
+7. Format + AEC/AGC — Load 800x1280 RAW8 register table, then override the
+                      exposure/gain settings (see below)
+8. ISP              — RAW8 GBRG -> RGB888, 80 MHz clock
+9. CSI controller   — 2-lane, RAW8 in, RGB888 out, DMA to display FB
+10. Stream on       — Sensor starts, CSI starts, frames flow continuously
+
+
+Exposure / Gain Fix
+-------------------
+The OV5647 driver's 800x1280 register table ships with problematic defaults:
+
+  - Manual AGC enabled with gain = 64775 (max)  -> blown-out white image
+  - Manual exposure = 0x0FFFFF (max)             -> also way too bright
+  - Gain ceiling = 0x22 (very low)               -> auto mode too dark
+  - Max AEC exposure = 0x0100 (256 lines)        -> auto mode too dark
+
+After loading the register table, main.c overrides these:
+
+  - 0x3503 = 0x60  — auto AEC + auto AGC (bits[1:0] = 0)
+  - 0x3a18/19      — gain ceiling raised to 0xF8
+  - 0x3a02/03      — max AEC exposure raised to 0x0680 (~1664 lines)
+  - 0x350a/b       — initial gain set to moderate (0x0040)
+  - 0x3500/01/02   — initial exposure set to moderate (~1024 lines)
+
+The sensor's built-in AEC/AGC algorithm then adjusts automatically to
+ambient lighting conditions.
+
+
+Key Config (sdkconfig.defaults)
+-------------------------------
+  CONFIG_CAMERA_OV5647=y
+  CONFIG_CAMERA_OV5647_AUTO_DETECT_MIPI_INTERFACE_SENSOR=y
+  CONFIG_CAMERA_OV5647_MIPI_RAW8_800X1280_50FPS=y
+  CONFIG_CAMERA_OV5647_MIPI_DEFAULT_FMT_RAW8_800X1280_50FPS=y
+  CONFIG_CAMERA_OV5647_CSI_LINESYNC_ENABLE=y
+
+
+Pin Summary
+-----------
+  GPIO 7   — Camera I2C SDA (shared with display backlight init)
+  GPIO 8   — Camera I2C SCL (shared with display backlight init)
+  GPIO 20  — Camera XCLK (24 MHz)
+  GPIO 26  — Display backlight
+  GPIO 27  — Display reset
