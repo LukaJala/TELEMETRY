@@ -64,33 +64,33 @@ void ui_init(lv_display_t *disp)
 
 void ui_refresh(void)
 {
-    lvgl_port_lock(0);
+    lvgl_port_lock(portMAX_DELAY);
     lv_obj_invalidate(lv_screen_active());
     lvgl_port_unlock();
 }
 
 void ui_set_text(const char *text)
 {
-    /* Safety check */
     if (data_label == NULL || text == NULL) {
         return;
     }
 
-    /* Lock, update, unlock */
-    lvgl_port_lock(0);
+    if (!lvgl_port_lock(0)) {
+        return;  /* LVGL busy (e.g. camera streaming) — skip update */
+    }
     lv_label_set_text(data_label, text);
     lvgl_port_unlock();
 }
 
 void ui_set_status(const char *status)
 {
-    /* Safety check */
     if (status_label == NULL || status == NULL) {
         return;
     }
 
-    /* Lock, update, unlock */
-    lvgl_port_lock(0);
+    if (!lvgl_port_lock(0)) {
+        return;
+    }
     lv_label_set_text(status_label, status);
     lvgl_port_unlock();
 }

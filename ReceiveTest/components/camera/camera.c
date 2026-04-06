@@ -30,8 +30,6 @@
 #include "esp_lcd_mipi_dsi.h"
 #include "esp_lvgl_port.h"
 
-#include "imx219.h"
-
 static const char *TAG = "CAMERA";
 
 /* ============================================================
@@ -65,6 +63,7 @@ static esp_cam_sensor_device_t *s_sensor      = NULL;
 static volatile bool            s_running     = false;
 static TaskHandle_t             s_task        = NULL;
 static SemaphoreHandle_t        s_task_ready  = NULL;
+static SemaphoreHandle_t        s_task_done   = NULL;
 
 /* ============================================================
  * INTERNAL: XCLK generation via ESP clock router
@@ -139,6 +138,7 @@ static void camera_stream_task(void *arg)
     lvgl_port_unlock();
 
     s_task = NULL;
+    xSemaphoreGive(s_task_done);
     vTaskDelete(NULL);
 }
 
@@ -149,9 +149,6 @@ static void camera_stream_task(void *arg)
 esp_err_t camera_init(void)
 {
     ESP_LOGI(TAG, "Initializing camera (%dx%d RAW8 -> RGB888)", CAM_H_RES, CAM_V_RES);
-
-    /* Force linker to include IMX219 driver as a fallback sensor */
-    imx219_force_link();
 
     /* --- XCLK --- */
     xclk_init();
@@ -284,6 +281,9 @@ esp_err_t camera_start(esp_lcd_panel_handle_t panel)
     if (!s_task_ready) {
         s_task_ready = xSemaphoreCreateBinary();
     }
+    if (!s_task_done) {
+        s_task_done = xSemaphoreCreateBinary();
+    }
 
     cam_task_args_t *ta = malloc(sizeof(cam_task_args_t));
     ta->disp_fb = disp_fb;
@@ -301,19 +301,39 @@ esp_err_t camera_stop(void)
     }
 
     ESP_LOGI(TAG, "Stopping camera stream");
+
+    /* Signal the task to exit — sensor keeps streaming so receive() returns
+     * naturally on the next frame, task checks s_running and breaks out. */
     s_running = false;
 
-    vTaskDelay(pdMS_TO_TICKS(600));
+    /* Wait for the stream task to actually exit and release LVGL */
+    if (s_task_done) {
+        xSemaphoreTake(s_task_done, pdMS_TO_TICKS(2000));
+    }
 
+    /* Now that the task is gone, safely stop hardware */
     int stream_off = 0;
     esp_cam_sensor_ioctl(s_sensor, ESP_CAM_SENSOR_IOC_S_STREAM, &stream_off);
-
     esp_cam_ctlr_stop(s_cam_handle);
+
+    /* Reset CSI controller internal state (flush stale queue entries)
+     * so it's ready for a clean start next time */
+    esp_cam_ctlr_disable(s_cam_handle);
+    esp_cam_ctlr_enable(s_cam_handle);
 
     if (s_task_ready) {
         vSemaphoreDelete(s_task_ready);
         s_task_ready = NULL;
     }
+    if (s_task_done) {
+        vSemaphoreDelete(s_task_done);
+        s_task_done = NULL;
+    }
     ESP_LOGI(TAG, "Camera stream stopped");
     return ESP_OK;
+}
+
+bool camera_is_running(void)
+{
+    return s_running;
 }

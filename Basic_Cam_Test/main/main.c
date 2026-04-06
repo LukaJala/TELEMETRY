@@ -281,9 +281,10 @@ void app_main(void)
         trans.buflen = disp_fb_size;
         ESP_ERROR_CHECK(esp_cam_ctlr_receive(cam_ctlr, &trans, ESP_CAM_CTLR_MAX_DELAY));
 
-        if (frame_count % 300 == 0) {
-            ESP_LOGI(TAG, "Frame %d", frame_count);
-        }
+        if (frame_count < 5 || frame_count % 300 == 0) 
+        {                                                                            
+            ESP_LOGI(TAG, "Frame %d recv_size=%u", frame_count, (unsigned)trans.received_size);                                 
+        } 
         frame_count++;
     }
 }

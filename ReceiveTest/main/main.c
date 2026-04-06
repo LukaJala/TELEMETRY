@@ -19,6 +19,9 @@ static const char *TAG = "ReceiveTest";
 /* Panel handle stored globally so the data callback can pass it to camera */
 static esp_lcd_panel_handle_t s_panel = NULL;
 
+/* Last telemetry data — shown on display when camera stops */
+static char s_last_data[128] = "Waiting...";
+
 /* Commands sent from sender.py to control camera mode */
 #define CMD_CAM_START   "__CAM_START__"
 #define CMD_CAM_STOP    "__CAM_STOP__"
@@ -33,7 +36,7 @@ static void on_client_disconnected(void)
     ESP_LOGI(TAG, "Client disconnected — resetting to initial state");
     camera_stop();
     ui_refresh();
-    ui_set_text("Waiting...");
+    ui_set_text(s_last_data);
 }
 
 /*
@@ -51,13 +54,20 @@ static void on_data_received(const char *data, int length)
     } else if (strcmp(data, CMD_CAM_STOP) == 0) {
         ESP_LOGI(TAG, "Camera stop command received");
         camera_stop();
-        /* Force full redraw to clear stale camera frame, then restore text */
+        /* Force full redraw to clear stale camera frame, show latest data */
         ui_refresh();
-        ui_set_text("Waiting...");
+        ui_set_text(s_last_data);
 
     } else {
-        ESP_LOGI(TAG, "Updating display with: %s", data);
-        ui_set_text(data);
+        /* Always store latest telemetry. If camera is active, it will
+         * be shown once the camera stops. */
+        strncpy(s_last_data, data, sizeof(s_last_data) - 1);
+        s_last_data[sizeof(s_last_data) - 1] = '\0';
+
+        if (!camera_is_running()) {
+            ESP_LOGI(TAG, "Updating display with: %s", data);
+            ui_set_text(data);
+        }
     }
 }
 

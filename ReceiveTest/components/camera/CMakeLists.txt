@@ -13,5 +13,4 @@ idf_component_register(
         esp_lvgl_port
         espressif__esp_cam_sensor
         espressif__esp_sccb_intf
-        imx219
 )

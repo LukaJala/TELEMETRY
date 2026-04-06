@@ -925,13 +925,6 @@ C:/D-Drive/School/MSU/Solar Car/code/ESP32Stuff/ReceiveTest/build/esp-idf/espres
 C:/D-Drive/School/MSU/Solar Car/code/ESP32Stuff/ReceiveTest/build/esp-idf/espressif__esp_cam_sensor/CMakeFiles/install.dir
 C:/D-Drive/School/MSU/Solar Car/code/ESP32Stuff/ReceiveTest/build/esp-idf/espressif__esp_cam_sensor/CMakeFiles/install/local.dir
 C:/D-Drive/School/MSU/Solar Car/code/ESP32Stuff/ReceiveTest/build/esp-idf/espressif__esp_cam_sensor/CMakeFiles/install/strip.dir
-C:/D-Drive/School/MSU/Solar Car/code/ESP32Stuff/ReceiveTest/build/esp-idf/imx219/CMakeFiles/__idf_imx219.dir
-C:/D-Drive/School/MSU/Solar Car/code/ESP32Stuff/ReceiveTest/build/esp-idf/imx219/CMakeFiles/edit_cache.dir
-C:/D-Drive/School/MSU/Solar Car/code/ESP32Stuff/ReceiveTest/build/esp-idf/imx219/CMakeFiles/rebuild_cache.dir
-C:/D-Drive/School/MSU/Solar Car/code/ESP32Stuff/ReceiveTest/build/esp-idf/imx219/CMakeFiles/list_install_components.dir
-C:/D-Drive/School/MSU/Solar Car/code/ESP32Stuff/ReceiveTest/build/esp-idf/imx219/CMakeFiles/install.dir
-C:/D-Drive/School/MSU/Solar Car/code/ESP32Stuff/ReceiveTest/build/esp-idf/imx219/CMakeFiles/install/local.dir
-C:/D-Drive/School/MSU/Solar Car/code/ESP32Stuff/ReceiveTest/build/esp-idf/imx219/CMakeFiles/install/strip.dir
 C:/D-Drive/School/MSU/Solar Car/code/ESP32Stuff/ReceiveTest/build/esp-idf/camera/CMakeFiles/__idf_camera.dir
 C:/D-Drive/School/MSU/Solar Car/code/ESP32Stuff/ReceiveTest/build/esp-idf/camera/CMakeFiles/edit_cache.dir
 C:/D-Drive/School/MSU/Solar Car/code/ESP32Stuff/ReceiveTest/build/esp-idf/camera/CMakeFiles/rebuild_cache.dir

@@ -177,10 +177,8 @@ C:/D-Drive/School/MSU/Solar Car/code/ESP32Stuff/ReceiveTest/build/esp-idf/espres
 C:/D-Drive/School/MSU/Solar Car/code/ESP32Stuff/ReceiveTest/build/esp-idf/espressif__esp_cam_sensor/libespressif__esp_cam_sensor.a
 C:/D-Drive/School/MSU/Solar Car/code/ESP32Stuff/ReceiveTest/build/esp-idf/espressif__esp_sccb_intf/libespressif__esp_sccb_intf.a
 C:/D-Drive/School/MSU/Solar Car/code/ESP32Stuff/ReceiveTest/build/esp-idf/esp_driver_cam/libesp_driver_cam.a
-C:/D-Drive/School/MSU/Solar Car/code/ESP32Stuff/ReceiveTest/build/esp-idf/imx219/libimx219.a
-C:/D-Drive/School/MSU/Solar Car/code/ESP32Stuff/ReceiveTest/build/esp-idf/espressif__esp_cam_sensor/libespressif__esp_cam_sensor.a
 C:/D-Drive/School/MSU/Solar Car/code/ESP32Stuff/ReceiveTest/build/esp-idf/camera/libcamera.a
-C:/D-Drive/School/MSU/Solar Car/code/ESP32Stuff/ReceiveTest/build/esp-idf/imx219/libimx219.a
+C:/D-Drive/School/MSU/Solar Car/code/ESP32Stuff/ReceiveTest/build/esp-idf/espressif__esp_cam_sensor/libespressif__esp_cam_sensor.a
 C:/D-Drive/School/MSU/Solar Car/code/ESP32Stuff/ReceiveTest/build/esp-idf/main/libmain.a
 C:/D-Drive/School/MSU/Solar Car/code/ESP32Stuff/ReceiveTest/build/esp-idf/display/libdisplay.a
 C:/D-Drive/School/MSU/Solar Car/code/ESP32Stuff/ReceiveTest/build/esp-idf/ui/libui.a

@@ -1,0 +1,11 @@
+{
+	"idf.currentSetup": "C:\\Users\\Asus M16\\esp\\v5.5.2\\esp-idf",
+	"idf.portWin": "COM7",
+	"idf.openOcdConfigs": [
+		"board/esp32p4-builtin.cfg"
+	],
+	"idf.customExtraVars": {
+		"IDF_TARGET": "esp32p4"
+	},
+	"idf.flashType": "UART"
+}

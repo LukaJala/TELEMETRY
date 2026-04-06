@@ -20,3 +20,8 @@ esp_err_t camera_start(esp_lcd_panel_handle_t panel);
  * Stop streaming and hand the display back to LVGL.
  */
 esp_err_t camera_stop(void);
+
+/*
+ * Returns true if the camera is currently streaming.
+ */
+bool camera_is_running(void);
