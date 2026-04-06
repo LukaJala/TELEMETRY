@@ -96,7 +96,7 @@ void app_main(void)
     ui_init(disp);
 
     /*
-     * Step 5: Initialize camera (IMX219 via MIPI CSI)
+     * Step 5: Initialize camera (OV5647 via MIPI CSI)
      * - Sets up I2C/SCCB, CSI controller, and ISP
      * - Does not start streaming yet
      **/

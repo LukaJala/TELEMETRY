@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: 2024-2025 Espressif Systems (Shanghai) CO LTD
+ * SPDX-FileCopyrightText: 2024-2026 Espressif Systems (Shanghai) CO LTD
  *
  * SPDX-License-Identifier: Apache-2.0
  */
@@ -48,6 +48,7 @@ static lvgl_port_ctx_t lvgl_port_ctx;
 static void lvgl_port_task(void *arg);
 static esp_err_t lvgl_port_tick_init(void);
 static void lvgl_port_task_deinit(void);
+static inline bool indev_matches_event(const lv_indev_t *indev, EventBits_t event);
 
 /*******************************************************************************
 * Public API functions
@@ -57,7 +58,8 @@ esp_err_t lvgl_port_init(const lvgl_port_cfg_t *cfg)
 {
     esp_err_t ret = ESP_OK;
     ESP_GOTO_ON_FALSE(cfg, ESP_ERR_INVALID_ARG, err, TAG, "invalid argument");
-    ESP_GOTO_ON_FALSE(cfg->task_affinity < (configNUM_CORES), ESP_ERR_INVALID_ARG, err, TAG, "Bad core number for task! Maximum core number is %d", (configNUM_CORES - 1));
+    ESP_GOTO_ON_FALSE(cfg->task_affinity < (configNUM_CORES), ESP_ERR_INVALID_ARG, err, TAG,
+                      "Bad core number for task! Maximum core number is %d", (configNUM_CORES - 1));
 
     memset(&lvgl_port_ctx, 0, sizeof(lvgl_port_ctx));
 
@@ -79,11 +81,14 @@ esp_err_t lvgl_port_init(const lvgl_port_cfg_t *cfg)
     ESP_GOTO_ON_FALSE(lvgl_port_ctx.lvgl_events, ESP_ERR_NO_MEM, err, TAG, "Create LVGL Event Group fail!");
 
     BaseType_t res;
-    const uint32_t caps = cfg->task_stack_caps ? cfg->task_stack_caps : MALLOC_CAP_INTERNAL | MALLOC_CAP_DEFAULT; // caps cannot be zero
+    const uint32_t caps = cfg->task_stack_caps ? cfg->task_stack_caps : MALLOC_CAP_INTERNAL |
+                          MALLOC_CAP_DEFAULT; // caps cannot be zero
     if (cfg->task_affinity < 0) {
-        res = xTaskCreateWithCaps(lvgl_port_task, "taskLVGL", cfg->task_stack, xTaskGetCurrentTaskHandle(), cfg->task_priority, &lvgl_port_ctx.lvgl_task, caps);
+        res = xTaskCreateWithCaps(lvgl_port_task, "taskLVGL", cfg->task_stack, xTaskGetCurrentTaskHandle(), cfg->task_priority,
+                                  &lvgl_port_ctx.lvgl_task, caps);
     } else {
-        res = xTaskCreatePinnedToCoreWithCaps(lvgl_port_task, "taskLVGL", cfg->task_stack, xTaskGetCurrentTaskHandle(), cfg->task_priority, &lvgl_port_ctx.lvgl_task, cfg->task_affinity, caps);
+        res = xTaskCreatePinnedToCoreWithCaps(lvgl_port_task, "taskLVGL", cfg->task_stack, xTaskGetCurrentTaskHandle(),
+                                              cfg->task_priority, &lvgl_port_ctx.lvgl_task, cfg->task_affinity, caps);
     }
     ESP_GOTO_ON_FALSE(res == pdPASS, ESP_FAIL, err, TAG, "Create LVGL task fail!");
 
@@ -221,11 +226,13 @@ static void lvgl_port_task(void *arg)
         if (lv_display_get_default() && lvgl_port_lock(0)) {
 
             /* Call read input devices */
-            if (events & LVGL_PORT_EVENT_TOUCH) {
+            if (events & LVGL_PORT_EVENT_TOUCH || events & LVGL_PORT_EVENT_ENCODER) {
                 xSemaphoreTake(lvgl_port_ctx.timer_mux, portMAX_DELAY);
                 indev = lv_indev_get_next(NULL);
                 while (indev != NULL) {
-                    lv_indev_read(indev);
+                    if (indev_matches_event(indev, events)) {
+                        lv_indev_read(indev);
+                    }
                     indev = lv_indev_get_next(indev);
                 }
                 xSemaphoreGive(lvgl_port_ctx.timer_mux);
@@ -252,7 +259,7 @@ static void lvgl_port_task(void *arg)
     lvgl_port_task_deinit();
 
     /* Close task */
-    vTaskDelete( NULL );
+    vTaskDeleteWithCaps( NULL );
 }
 
 static void lvgl_port_task_deinit(void)
@@ -274,10 +281,9 @@ static void lvgl_port_task_deinit(void)
         vEventGroupDelete(lvgl_port_ctx.lvgl_events);
     }
     memset(&lvgl_port_ctx, 0, sizeof(lvgl_port_ctx));
-#if LV_ENABLE_GC || !LV_MEM_CUSTOM
+
     /* Deinitialize LVGL */
     lv_deinit();
-#endif
 }
 
 static void lvgl_port_tick_increment(void *arg)
@@ -295,6 +301,27 @@ static esp_err_t lvgl_port_tick_init(void)
         .callback = &lvgl_port_tick_increment,
         .name = "LVGL tick",
     };
-    ESP_RETURN_ON_ERROR(esp_timer_create(&lvgl_tick_timer_args, &lvgl_port_ctx.tick_timer), TAG, "Creating LVGL timer filed!");
+    ESP_RETURN_ON_ERROR(esp_timer_create(&lvgl_tick_timer_args, &lvgl_port_ctx.tick_timer), TAG,
+                        "Creating LVGL timer filed!");
     return esp_timer_start_periodic(lvgl_port_ctx.tick_timer, lvgl_port_ctx.timer_period_ms * 1000);
+}
+
+static inline bool indev_matches_event(const lv_indev_t *indev, EventBits_t event)
+{
+    assert(indev != NULL);
+
+    bool does_match = false;
+
+    switch (lv_indev_get_type(indev)) {
+    case LV_INDEV_TYPE_KEYPAD:
+    case LV_INDEV_TYPE_POINTER:
+        does_match = event & LVGL_PORT_EVENT_TOUCH;
+        break;
+    case LV_INDEV_TYPE_ENCODER:
+        does_match = event & LVGL_PORT_EVENT_ENCODER;
+        break;
+    default:
+        does_match = false;
+    }
+    return does_match;
 }

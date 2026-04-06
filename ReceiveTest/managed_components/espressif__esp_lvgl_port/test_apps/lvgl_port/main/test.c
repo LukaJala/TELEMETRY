@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: 2024-2025 Espressif Systems (Shanghai) CO LTD
+ * SPDX-FileCopyrightText: 2024-2026 Espressif Systems (Shanghai) CO LTD
  *
  * SPDX-License-Identifier: CC0-1.0
  */
@@ -118,7 +118,8 @@ static esp_err_t app_lcd_init(void)
         .spi_mode = 0,
         .trans_queue_depth = 10,
     };
-    ESP_GOTO_ON_ERROR(esp_lcd_new_panel_io_spi((esp_lcd_spi_bus_handle_t)EXAMPLE_LCD_SPI_NUM, &io_config, &lcd_io), err, TAG, "New panel IO failed");
+    ESP_GOTO_ON_ERROR(esp_lcd_new_panel_io_spi((esp_lcd_spi_bus_handle_t)EXAMPLE_LCD_SPI_NUM, &io_config, &lcd_io), err,
+                      TAG, "New panel IO failed");
 
     ESP_LOGD(TAG, "Install LCD driver");
     const ili9341_vendor_config_t vendor_config = {
@@ -209,10 +210,11 @@ static esp_err_t app_touch_deinit(void)
     return ESP_OK;
 }
 
-static esp_err_t app_lvgl_init(void)
+static esp_err_t app_lvgl_init(int task_affinity)
 {
     /* Initialize LVGL */
-    const lvgl_port_cfg_t lvgl_cfg = ESP_LVGL_PORT_INIT_CONFIG();
+    lvgl_port_cfg_t lvgl_cfg = ESP_LVGL_PORT_INIT_CONFIG();
+    lvgl_cfg.task_affinity = task_affinity;
     ESP_RETURN_ON_ERROR(lvgl_port_init(&lvgl_cfg), TAG, "LVGL port initialization failed");
 
     /* Add LCD screen */
@@ -288,9 +290,11 @@ static void app_main_display(void)
     lv_obj_set_style_text_align(label, LV_TEXT_ALIGN_CENTER, 0);
 #if LVGL_VERSION_MAJOR == 8
     lv_label_set_recolor(label, true);
-    lv_label_set_text(label, "#FF0000 "LV_SYMBOL_BELL" Hello world Espressif and LVGL "LV_SYMBOL_BELL"#\n#FF9400 "LV_SYMBOL_WARNING" For simplier initialization, use BSP "LV_SYMBOL_WARNING" #");
+    lv_label_set_text(label,
+                      "#FF0000 "LV_SYMBOL_BELL" Hello world Espressif and LVGL "LV_SYMBOL_BELL"#\n#FF9400 "LV_SYMBOL_WARNING" For simplier initialization, use BSP "LV_SYMBOL_WARNING" #");
 #else
-    lv_label_set_text(label, LV_SYMBOL_BELL" Hello world Espressif and LVGL "LV_SYMBOL_BELL"\n "LV_SYMBOL_WARNING" For simplier initialization, use BSP "LV_SYMBOL_WARNING);
+    lv_label_set_text(label,
+                      LV_SYMBOL_BELL" Hello world Espressif and LVGL "LV_SYMBOL_BELL"\n "LV_SYMBOL_WARNING" For simplier initialization, use BSP "LV_SYMBOL_WARNING);
 #endif
     lv_obj_align(label, LV_ALIGN_CENTER, 0, -30);
 
@@ -306,7 +310,7 @@ static void app_main_display(void)
 }
 
 // Some resources are lazy allocated in the LCD driver, the threadhold is left for that case
-#define TEST_MEMORY_LEAK_THRESHOLD (50)
+#define TEST_MEMORY_LEAK_THRESHOLD (200)
 
 static void check_leak(size_t start_free, size_t end_free, const char *type)
 {
@@ -333,8 +337,8 @@ TEST_CASE("Main test LVGL port", "[lvgl port]")
 
     ESP_LOGI(TAG, "Initilize LVGL.");
 
-    /* LVGL initialization */
-    TEST_ASSERT_EQUAL(app_lvgl_init(), ESP_OK);
+    /* LVGL initialization - no task affinity */
+    TEST_ASSERT_EQUAL(app_lvgl_init(-1), ESP_OK);
 
     /* Show LVGL objects */
     app_main_display();
@@ -349,8 +353,33 @@ TEST_CASE("Main test LVGL port", "[lvgl port]")
 
     ESP_LOGI(TAG, "LVGL deinitialized.");
 
+    esp_reent_cleanup();
     size_t end_lvgl_freemem_8bit = heap_caps_get_free_size(MALLOC_CAP_8BIT);
     size_t end_lvgl_freemem_32bit = heap_caps_get_free_size(MALLOC_CAP_32BIT);
+    check_leak(start_lvgl_freemem_8bit, end_lvgl_freemem_8bit, "8BIT LVGL");
+    check_leak(start_lvgl_freemem_32bit, end_lvgl_freemem_32bit, "32BIT LVGL");
+
+    ESP_LOGI(TAG, "Initilize LVGL - task affinity to core 1");
+
+    /* LVGL initialization - task affinity to core 1 */
+    TEST_ASSERT_EQUAL(app_lvgl_init(1), ESP_OK);
+
+    /* Show LVGL objects */
+    app_main_display();
+
+    vTaskDelay(5000 / portTICK_PERIOD_MS);
+
+    /* LVGL deinit */
+    TEST_ASSERT_EQUAL(app_lvgl_deinit(), ESP_OK);
+
+    /* When using LVGL8, it takes some time to release all memory */
+    vTaskDelay(1000 / portTICK_PERIOD_MS);
+
+    ESP_LOGI(TAG, "LVGL deinitialized.");
+
+    esp_reent_cleanup();
+    end_lvgl_freemem_8bit = heap_caps_get_free_size(MALLOC_CAP_8BIT);
+    end_lvgl_freemem_32bit = heap_caps_get_free_size(MALLOC_CAP_32BIT);
     check_leak(start_lvgl_freemem_8bit, end_lvgl_freemem_8bit, "8BIT LVGL");
     check_leak(start_lvgl_freemem_32bit, end_lvgl_freemem_32bit, "32BIT LVGL");
 
@@ -364,6 +393,7 @@ TEST_CASE("Main test LVGL port", "[lvgl port]")
 
     ESP_LOGI(TAG, "LCD deinitilized.");
 
+    esp_reent_cleanup();
     size_t end_freemem_8bit = heap_caps_get_free_size(MALLOC_CAP_8BIT);
     size_t end_freemem_32bit = heap_caps_get_free_size(MALLOC_CAP_32BIT);
     check_leak(start_freemem_8bit, end_freemem_8bit, "8BIT");

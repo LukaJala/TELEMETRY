@@ -19,7 +19,10 @@
       "WebFetch(domain:documentation.espressif.com)",
       "WebFetch(domain:www.cnx-software.com)",
       "Bash(where idf.py)",
-      "Bash(cmd.exe:*)"
+      "Bash(cmd.exe:*)",
+      "Bash(python \"C:\\\\Users\\\\Asus M16\\\\esp\\\\v5.5.2\\\\esp-idf\\\\tools\\\\idf.py\" build)",
+      "Bash(\"C:\\\\Users\\\\Asus M16\\\\esp\\\\v5.5.2\\\\esp-idf\\\\export.bat\")",
+      "Bash(\"c:\\\\D-Drive\\\\School\\\\MSU\\\\Espressif\\\\python_env\\\\idf5.5_py3.11_env\\\\Scripts\\\\python.exe\" \"C:\\\\Users\\\\Asus M16\\\\esp\\\\v5.5.2\\\\esp-idf\\\\tools\\\\idf.py\" build)"
     ]
   }
 }

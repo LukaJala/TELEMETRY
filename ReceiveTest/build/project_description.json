@@ -1,7 +1,7 @@
 {
     "version":            "1.2",
     "project_name":       "ReceiveTest",
-    "project_version":    "92583ad-dirty",
+    "project_version":    "fc93ef5-dirty",
     "project_path":       "C:/D-Drive/School/MSU/Solar Car/code/ESP32Stuff/ReceiveTest",
     "idf_path":           "C:/Users/Asus M16/esp/v5.5.2/esp-idf",
     "build_dir":          "C:/D-Drive/School/MSU/Solar Car/code/ESP32Stuff/ReceiveTest/build",
@@ -1105,8 +1105,8 @@
             "managed_reqs": [],
             "managed_priv_reqs": [ "espressif__cmake_utilities", "espressif__esp_sccb_intf" ],
             "file": "C:/D-Drive/School/MSU/Solar Car/code/ESP32Stuff/ReceiveTest/build/esp-idf/espressif__esp_cam_sensor/libespressif__esp_cam_sensor.a",
-            "sources": [ "C:/D-Drive/School/MSU/Solar Car/code/ESP32Stuff/ReceiveTest/managed_components/espressif__esp_cam_sensor/src/esp_cam_sensor.c", "C:/D-Drive/School/MSU/Solar Car/code/ESP32Stuff/ReceiveTest/managed_components/espressif__esp_cam_sensor/src/esp_cam_sensor_xclk.c", "C:/D-Drive/School/MSU/Solar Car/code/ESP32Stuff/ReceiveTest/managed_components/espressif__esp_cam_sensor/src/esp_cam_motor.c", "C:/D-Drive/School/MSU/Solar Car/code/ESP32Stuff/ReceiveTest/managed_components/espressif__esp_cam_sensor/src/driver_cam/esp_cam_ctlr_spi_cam.c", "C:/D-Drive/School/MSU/Solar Car/code/ESP32Stuff/ReceiveTest/managed_components/espressif__esp_cam_sensor/src/driver_spi/spi_slave.c" ],
-            "include_dirs": [ "include" ]
+            "sources": [ "C:/D-Drive/School/MSU/Solar Car/code/ESP32Stuff/ReceiveTest/managed_components/espressif__esp_cam_sensor/src/esp_cam_sensor.c", "C:/D-Drive/School/MSU/Solar Car/code/ESP32Stuff/ReceiveTest/managed_components/espressif__esp_cam_sensor/src/esp_cam_sensor_xclk.c", "C:/D-Drive/School/MSU/Solar Car/code/ESP32Stuff/ReceiveTest/managed_components/espressif__esp_cam_sensor/src/esp_cam_motor.c", "C:/D-Drive/School/MSU/Solar Car/code/ESP32Stuff/ReceiveTest/managed_components/espressif__esp_cam_sensor/src/driver_cam/esp_cam_ctlr_spi_cam.c", "C:/D-Drive/School/MSU/Solar Car/code/ESP32Stuff/ReceiveTest/managed_components/espressif__esp_cam_sensor/src/driver_spi/spi_slave.c", "C:/D-Drive/School/MSU/Solar Car/code/ESP32Stuff/ReceiveTest/managed_components/espressif__esp_cam_sensor/sensors/ov5647/ov5647.c" ],
+            "include_dirs": [ "include", "sensors/ov5647/include" ]
         },
         "espressif__esp_lvgl_port": {
             "alias": "idf::espressif__esp_lvgl_port",
@@ -3187,7 +3187,7 @@
             "priv_reqs": [ "esp_timer", "espressif__cmake_utilities", "espressif__esp_sccb_intf" ],
             "managed_reqs": [],
             "managed_priv_reqs": [ "espressif__cmake_utilities", "espressif__esp_sccb_intf" ],
-            "include_dirs": [ "include" ]
+            "include_dirs": [ "include", "sensors/ov5647/include" ]
         },
         "espressif__esp_lvgl_port": {
             "alias": "idf::espressif__esp_lvgl_port",

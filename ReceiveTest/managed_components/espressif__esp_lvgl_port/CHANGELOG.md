@@ -1,5 +1,25 @@
 # Changelog
 
+## 2.7.2
+
+### Features
+
+- Added a new event type for encoder events
+
+### Fixes
+
+- Encoder usage no longer causes unexpected touch controller readings - https://github.com/espressif/esp-bsp/issues/700
+
+## 2.7.1
+
+### Features
+- Added option to include a rounder callback
+
+### Fixes
+- Fixed deinitialization of the task which was created with caps - https://github.com/espressif/esp-bsp/issues/680
+- Call lv_deinit() - https://github.com/espressif/esp-bsp/issues/635
+- Fixed PPA rotation for IDF6
+
 ## 2.7.0
 
 ### Features
