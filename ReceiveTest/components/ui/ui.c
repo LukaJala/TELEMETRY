@@ -62,6 +62,13 @@ void ui_init(lv_display_t *disp)
     lvgl_port_unlock();
 }
 
+void ui_refresh(void)
+{
+    lvgl_port_lock(0);
+    lv_obj_invalidate(lv_screen_active());
+    lvgl_port_unlock();
+}
+
 void ui_set_text(const char *text)
 {
     /* Safety check */

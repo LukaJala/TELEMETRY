@@ -36,6 +36,7 @@ static const char *TAG = "NETWORK";
  * ============================================================ */
 static char ip_address_str[16] = "0.0.0.0";
 static network_data_callback_t data_callback = NULL;
+static network_disconnect_callback_t disconnect_callback = NULL;
 static esp_netif_t *eth_netif = NULL;
 
 /* ============================================================
@@ -171,6 +172,10 @@ static void tcp_server_task(void *pvParameters)
         }
 
         close(client_sock);
+
+        if (disconnect_callback != NULL) {
+            disconnect_callback();
+        }
     }
 
     close(listen_sock);
@@ -181,12 +186,13 @@ static void tcp_server_task(void *pvParameters)
  * ETHERNET INITIALIZATION
  * Sets up the hardware, static IP, and starts TCP server
  * ============================================================ */
-esp_err_t network_init(network_data_callback_t callback)
+esp_err_t network_init(network_data_callback_t data_cb, network_disconnect_callback_t disconnect_cb)
 {
     ESP_LOGI(TAG, "Initializing Ethernet with static IP: %s", STATIC_IP);
 
-    /* Save the callback function */
-    data_callback = callback;
+    /* Save the callback functions */
+    data_callback = data_cb;
+    disconnect_callback = disconnect_cb;
 
     /* Initialize TCP/IP stack */
     ESP_ERROR_CHECK(esp_netif_init());

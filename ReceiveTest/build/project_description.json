@@ -1,7 +1,7 @@
 {
     "version":            "1.2",
     "project_name":       "ReceiveTest",
-    "project_version":    "fc93ef5-dirty",
+    "project_version":    "20f28e2-dirty",
     "project_path":       "C:/D-Drive/School/MSU/Solar Car/code/ESP32Stuff/ReceiveTest",
     "idf_path":           "C:/Users/Asus M16/esp/v5.5.2/esp-idf",
     "build_dir":          "C:/D-Drive/School/MSU/Solar Car/code/ESP32Stuff/ReceiveTest/build",

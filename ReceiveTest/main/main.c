@@ -24,6 +24,19 @@ static esp_lcd_panel_handle_t s_panel = NULL;
 #define CMD_CAM_STOP    "__CAM_STOP__"
 
 /*
+ * DISCONNECT CALLBACK
+ * Called by network component when TCP client disconnects.
+ * Resets everything back to the initial waiting state.
+ **/
+static void on_client_disconnected(void)
+{
+    ESP_LOGI(TAG, "Client disconnected — resetting to initial state");
+    camera_stop();
+    ui_refresh();
+    ui_set_text("Waiting...");
+}
+
+/*
  * DATA CALLBACK
  * Called by network component when TCP data arrives
  **/
@@ -38,7 +51,8 @@ static void on_data_received(const char *data, int length)
     } else if (strcmp(data, CMD_CAM_STOP) == 0) {
         ESP_LOGI(TAG, "Camera stop command received");
         camera_stop();
-        /* Restore the UI now that LVGL has the display back */
+        /* Force full redraw to clear stale camera frame, then restore text */
+        ui_refresh();
         ui_set_text("Waiting...");
 
     } else {
@@ -110,7 +124,7 @@ void app_main(void)
      * - Starts TCP server on port 5000
      * - Calls on_data_received() when data arrives
      **/
-    network_init(on_data_received);
+    network_init(on_data_received, on_client_disconnected);
 
     /* Update status with IP address */
     char status_msg[64];
