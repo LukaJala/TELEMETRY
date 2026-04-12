@@ -171,7 +171,7 @@ class SenderApp:
             return False
 
         try:
-            self.socket.send(data.encode('utf-8'))
+            self.socket.send(data.encode('utf-8') + b'\x00')
             self.log(f"Sent: {data}")
             return True
         except Exception as e:

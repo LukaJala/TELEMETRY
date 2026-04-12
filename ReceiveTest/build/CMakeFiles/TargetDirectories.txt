@@ -897,6 +897,12 @@ C:/D-Drive/School/MSU/Solar Car/code/ESP32Stuff/ReceiveTest/build/esp-idf/displa
 C:/D-Drive/School/MSU/Solar Car/code/ESP32Stuff/ReceiveTest/build/esp-idf/display/CMakeFiles/install.dir
 C:/D-Drive/School/MSU/Solar Car/code/ESP32Stuff/ReceiveTest/build/esp-idf/display/CMakeFiles/install/local.dir
 C:/D-Drive/School/MSU/Solar Car/code/ESP32Stuff/ReceiveTest/build/esp-idf/display/CMakeFiles/install/strip.dir
+C:/D-Drive/School/MSU/Solar Car/code/ESP32Stuff/ReceiveTest/build/esp-idf/can_spec/CMakeFiles/edit_cache.dir
+C:/D-Drive/School/MSU/Solar Car/code/ESP32Stuff/ReceiveTest/build/esp-idf/can_spec/CMakeFiles/rebuild_cache.dir
+C:/D-Drive/School/MSU/Solar Car/code/ESP32Stuff/ReceiveTest/build/esp-idf/can_spec/CMakeFiles/list_install_components.dir
+C:/D-Drive/School/MSU/Solar Car/code/ESP32Stuff/ReceiveTest/build/esp-idf/can_spec/CMakeFiles/install.dir
+C:/D-Drive/School/MSU/Solar Car/code/ESP32Stuff/ReceiveTest/build/esp-idf/can_spec/CMakeFiles/install/local.dir
+C:/D-Drive/School/MSU/Solar Car/code/ESP32Stuff/ReceiveTest/build/esp-idf/can_spec/CMakeFiles/install/strip.dir
 C:/D-Drive/School/MSU/Solar Car/code/ESP32Stuff/ReceiveTest/build/esp-idf/ui/CMakeFiles/__idf_ui.dir
 C:/D-Drive/School/MSU/Solar Car/code/ESP32Stuff/ReceiveTest/build/esp-idf/ui/CMakeFiles/edit_cache.dir
 C:/D-Drive/School/MSU/Solar Car/code/ESP32Stuff/ReceiveTest/build/esp-idf/ui/CMakeFiles/rebuild_cache.dir

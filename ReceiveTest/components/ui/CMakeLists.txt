@@ -6,4 +6,5 @@ idf_component_register(
     REQUIRES
         lvgl
         esp_lvgl_port
+        can_spec
 )

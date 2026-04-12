@@ -1,6 +1,7 @@
 // entry point to display data through TCP
 #include <stdio.h>
 #include <string.h>
+#include <stdint.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "esp_log.h"
@@ -13,18 +14,32 @@
 #include "ui.h"
 #include "network.h"
 #include "camera.h"
+#include "display_can_spec.h"
 
 static const char *TAG = "ReceiveTest";
 
 /* Panel handle stored globally so the data callback can pass it to camera */
 static esp_lcd_panel_handle_t s_panel = NULL;
 
-/* Last telemetry data — shown on display when camera stops */
-static char s_last_data[128] = "Waiting...";
+/* Decoded CAN state — updated by every incoming CAN frame */
+static display_data_t s_can_data;
 
 /* Commands sent from sender.py to control camera mode */
 #define CMD_CAM_START   "__CAM_START__"
 #define CMD_CAM_STOP    "__CAM_STOP__"
+
+/* Size of a binary CAN-over-TCP frame: [0x01 magic][CAN_ID 4B][DLC 1B][data 8B] */
+#define CAN_FRAME_SIZE  14
+
+/*
+ * CONNECT CALLBACK
+ * Called by network component when a TCP client connects.
+ **/
+static void on_client_connected(void)
+{
+    ESP_LOGI(TAG, "Client connected");
+    ui_set_status("Connected");
+}
 
 /*
  * DISCONNECT CALLBACK
@@ -36,45 +51,69 @@ static void on_client_disconnected(void)
     ESP_LOGI(TAG, "Client disconnected — resetting to initial state");
     camera_stop();
     ui_refresh();
-    ui_set_text(s_last_data);
+    ui_set_text("Waiting...");
 }
 
 /*
  * DATA CALLBACK
- * Called by network component when TCP data arrives
- **/
-static void on_data_received(const char *data, int length)
+ * Called by network component when TCP data arrives.
+ *
+ * Two frame types:
+ *   - Text command (first byte >= 0x20): __CAM_START__ or __CAM_STOP__
+ *   - Binary CAN frame (13 bytes, first byte == 0x00): route through
+ *     display_route_frame() which decodes into s_can_data
+ */
+static void on_data_received(const uint8_t *data, int length)
 {
-    if (strcmp(data, CMD_CAM_START) == 0) {
-        ESP_LOGI(TAG, "Camera start command received");
-        if (camera_start(s_panel) != ESP_OK) {
-            ui_set_text("Camera unavailable");
+    /* Text command path */
+    if (length > 0 && data[0] >= 0x20) {
+        const char *cmd = (const char *)data;
+
+        if (strcmp(cmd, CMD_CAM_START) == 0) {
+            ESP_LOGI(TAG, "Camera start command received");
+            if (camera_start(s_panel) != ESP_OK) {
+                ui_set_text("Camera unavailable");
+            }
+
+        } else if (strcmp(cmd, CMD_CAM_STOP) == 0) {
+            ESP_LOGI(TAG, "Camera stop command received");
+            camera_stop();
+            ui_refresh();
+            ui_set_text("Waiting...");
         }
-
-    } else if (strcmp(data, CMD_CAM_STOP) == 0) {
-        ESP_LOGI(TAG, "Camera stop command received");
-        camera_stop();
-        /* Force full redraw to clear stale camera frame, show latest data */
-        ui_refresh();
-        ui_set_text(s_last_data);
-
-    } else {
-        /* Always store latest telemetry. If camera is active, it will
-         * be shown once the camera stops. */
-        strncpy(s_last_data, data, sizeof(s_last_data) - 1);
-        s_last_data[sizeof(s_last_data) - 1] = '\0';
-
-        if (!camera_is_running()) {
-            ESP_LOGI(TAG, "Updating display with: %s", data);
-            ui_set_text(data);
-        }
+        return;
     }
+
+    /* Binary CAN frame path */
+    if (length != CAN_FRAME_SIZE) {
+        ESP_LOGW(TAG, "Unexpected frame length %d — dropping", length);
+        return;
+    }
+
+    /* Unpack the TCP envelope: [0x01 magic][CAN_ID 4B LE][DLC 1B][payload 8B] */
+    uint32_t can_id = (uint32_t)data[1]
+                    | ((uint32_t)data[2] << 8)
+                    | ((uint32_t)data[3] << 16)
+                    | ((uint32_t)data[4] << 24);
+    /* data[5] is DLC — not needed by the router, payload is always 8B */
+    const uint8_t *payload = &data[6];
+
+    display_route_frame(&s_can_data, can_id, payload);
+
+    ESP_LOGD(TAG, "CAN frame 0x%08lX decoded (flags=0x%lX)",
+             (unsigned long)can_id, (unsigned long)s_can_data.update_flags);
+
+    if (!camera_is_running()) {
+        ui_update_can_data(&s_can_data);
+    }
+    s_can_data.update_flags = 0;
 }
 
 // MAIN ENTRY POINT
 void app_main(void)
 {
     ESP_LOGI(TAG, "Starting ReceiveTest");
+    memset(&s_can_data, 0, sizeof(s_can_data));
 
     /*
      * Step 1: Initialize display hardware
@@ -134,7 +173,7 @@ void app_main(void)
      * - Starts TCP server on port 5000
      * - Calls on_data_received() when data arrives
      **/
-    network_init(on_data_received, on_client_disconnected);
+    network_init(on_data_received, on_client_connected, on_client_disconnected);
 
     /* Update status with IP address */
     char status_msg[64];

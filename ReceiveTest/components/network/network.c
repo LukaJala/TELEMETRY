@@ -7,9 +7,9 @@
  */
 
 #include "network.h"
-#include "network_utils.h"
 
 #include <string.h>
+#include <stdint.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "esp_log.h"
@@ -29,14 +29,24 @@ static const char *TAG = "NETWORK";
 #define STATIC_GATEWAY  "192.168.1.1"     /* Your laptop's IP */
 #define STATIC_NETMASK  "255.255.255.0"   /* Subnet mask */
 #define TCP_PORT        5000               /* Port to listen on */
-#define RX_BUFFER_SIZE  128                /* Max message size */
+
+/* CAN frame over TCP is exactly 14 bytes: [0x01 magic][CAN_ID 4B][DLC 1B][data 8B]
+ * The 0x01 prefix distinguishes binary frames from text commands, which are always
+ * printable ASCII (>= 0x20) and therefore can never start with 0x01. */
+#define CAN_FRAME_MAGIC 0x01
+#define CAN_FRAME_SIZE  14
+
+/* Accumulator buffer: hold up to 8 frames worth of bytes to handle
+ * recv() returning multiple frames in one call */
+#define ACCUM_SIZE      (CAN_FRAME_SIZE * 8)
 
 /* ============================================================
  * GLOBAL STATE
  * ============================================================ */
 static char ip_address_str[16] = "0.0.0.0";
-static network_data_callback_t data_callback = NULL;
-static network_disconnect_callback_t disconnect_callback = NULL;
+static network_data_callback_t       data_callback       = NULL;
+static network_connect_callback_t    connect_callback     = NULL;
+static network_disconnect_callback_t disconnect_callback  = NULL;
 static esp_netif_t *eth_netif = NULL;
 
 /* ============================================================
@@ -84,19 +94,29 @@ static void ip_event_handler(void *arg, esp_event_base_t event_base,
 
 /* ============================================================
  * TCP SERVER TASK
- * Runs in background, accepts connections, receives data
+ * Runs in background, accepts connections, receives data.
+ *
+ * Frame dispatch logic:
+ *   - Bytes accumulate in a local buffer.
+ *   - If first byte of an accumulated chunk is NOT 0x00, treat the whole
+ *     chunk as a null-terminated text command (e.g. __CAM_START__).
+ *     All CAN IDs in the spec have 0x00 as their little-endian LSB,
+ *     whereas text commands start with printable ASCII (>= 0x20).
+ *   - Otherwise consume 13-byte CAN frames from the front of the buffer
+ *     one at a time and dispatch each to the callback.
  * ============================================================ */
 static void tcp_server_task(void *pvParameters)
 {
-    char rx_buffer[RX_BUFFER_SIZE];
-    char clean_buffer[RX_BUFFER_SIZE];
+    uint8_t accum[ACCUM_SIZE];
+    int     accum_len = 0;
+    uint8_t raw[ACCUM_SIZE];
+
     int listen_sock, client_sock;
     struct sockaddr_in server_addr, client_addr;
     socklen_t addr_len = sizeof(client_addr);
 
     ESP_LOGI(TAG, "Starting TCP server on port %d", TCP_PORT);
 
-    /* Create socket */
     listen_sock = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
     if (listen_sock < 0) {
         ESP_LOGE(TAG, "Failed to create socket");
@@ -104,13 +124,11 @@ static void tcp_server_task(void *pvParameters)
         return;
     }
 
-    /* Allow socket reuse (helps with quick restarts) */
     int opt = 1;
     setsockopt(listen_sock, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
 
-    /* Bind to our IP and port */
     server_addr.sin_family = AF_INET;
-    server_addr.sin_addr.s_addr = INADDR_ANY;  /* Accept from any interface */
+    server_addr.sin_addr.s_addr = INADDR_ANY;
     server_addr.sin_port = htons(TCP_PORT);
 
     if (bind(listen_sock, (struct sockaddr *)&server_addr, sizeof(server_addr)) < 0) {
@@ -120,7 +138,6 @@ static void tcp_server_task(void *pvParameters)
         return;
     }
 
-    /* Start listening (queue up to 1 connection) */
     if (listen(listen_sock, 1) < 0) {
         ESP_LOGE(TAG, "Failed to listen");
         close(listen_sock);
@@ -130,23 +147,25 @@ static void tcp_server_task(void *pvParameters)
 
     ESP_LOGI(TAG, "TCP server listening on %s:%d", ip_address_str, TCP_PORT);
 
-    /* Main server loop */
     while (1) {
         ESP_LOGI(TAG, "Waiting for client connection...");
 
-        /* Accept incoming connection (blocks until someone connects) */
         client_sock = accept(listen_sock, (struct sockaddr *)&client_addr, &addr_len);
         if (client_sock < 0) {
             ESP_LOGE(TAG, "Failed to accept connection");
             continue;
         }
 
-        ESP_LOGI(TAG, "Client connected from %s",
-                 inet_ntoa(client_addr.sin_addr));
+        ESP_LOGI(TAG, "Client connected from %s", inet_ntoa(client_addr.sin_addr));
+        accum_len = 0;
 
-        /* Receive data from this client until they disconnect */
+        if (connect_callback != NULL) {
+            connect_callback();
+        }
+
         while (1) {
-            int len = recv(client_sock, rx_buffer, RX_BUFFER_SIZE - 1, 0);
+            int space = (int)sizeof(raw);
+            int len = recv(client_sock, raw, space, 0);
 
             if (len < 0) {
                 ESP_LOGE(TAG, "Receive error");
@@ -154,19 +173,51 @@ static void tcp_server_task(void *pvParameters)
             } else if (len == 0) {
                 ESP_LOGI(TAG, "Client disconnected");
                 break;
-            } else {
-                /* Null-terminate the received string */
-                rx_buffer[len] = '\0';
+            }
 
-                size_t clean_len = network_sanitize_payload(
-                    rx_buffer, (size_t)len, clean_buffer, sizeof(clean_buffer)
-                );
+            /* Append new bytes to accumulator, guard against overflow */
+            if (accum_len + len > (int)sizeof(accum)) {
+                ESP_LOGW(TAG, "Accumulator overflow — resetting");
+                accum_len = 0;
+            }
+            memcpy(accum + accum_len, raw, len);
+            accum_len += len;
 
-                ESP_LOGI(TAG, "Received (sanitized): %s", clean_buffer);
+            /* Dispatch all complete units from the front of the accumulator */
+            while (accum_len > 0 && data_callback != NULL) {
 
-                /* Call the callback function to handle the data */
-                if (data_callback != NULL && clean_len > 0) {
-                    data_callback(clean_buffer, (int)clean_len);
+                if (accum[0] == CAN_FRAME_MAGIC) {
+                    /* Binary CAN frame: [0x01][CAN_ID 4B][DLC 1B][data 8B] */
+                    if (accum_len < CAN_FRAME_SIZE) {
+                        break; /* wait for more bytes */
+                    }
+                    data_callback(accum, CAN_FRAME_SIZE);
+                    accum_len -= CAN_FRAME_SIZE;
+                    memmove(accum, accum + CAN_FRAME_SIZE, accum_len);
+
+                } else if (accum[0] >= 0x20) {
+                    /* Text command: null-terminated printable ASCII string */
+                    int cmd_len = 0;
+                    while (cmd_len < accum_len && accum[cmd_len] != '\0') {
+                        cmd_len++;
+                    }
+                    if (cmd_len < accum_len && accum[cmd_len] == '\0') {
+                        /* Complete — dispatch */
+                        ESP_LOGI(TAG, "Text command: %s", (char *)accum);
+                        data_callback(accum, cmd_len);
+                        int consumed = cmd_len + 1;
+                        accum_len -= consumed;
+                        memmove(accum, accum + consumed, accum_len);
+                    } else {
+                        /* Incomplete — wait for more bytes */
+                        break;
+                    }
+
+                } else {
+                    /* Unknown byte — drop it and resync */
+                    ESP_LOGW(TAG, "Unknown framing byte 0x%02X — dropping", accum[0]);
+                    accum_len--;
+                    memmove(accum, accum + 1, accum_len);
                 }
             }
         }
@@ -186,12 +237,15 @@ static void tcp_server_task(void *pvParameters)
  * ETHERNET INITIALIZATION
  * Sets up the hardware, static IP, and starts TCP server
  * ============================================================ */
-esp_err_t network_init(network_data_callback_t data_cb, network_disconnect_callback_t disconnect_cb)
+esp_err_t network_init(network_data_callback_t data_cb,
+                       network_connect_callback_t connect_cb,
+                       network_disconnect_callback_t disconnect_cb)
 {
     ESP_LOGI(TAG, "Initializing Ethernet with static IP: %s", STATIC_IP);
 
     /* Save the callback functions */
-    data_callback = data_cb;
+    data_callback       = data_cb;
+    connect_callback    = connect_cb;
     disconnect_callback = disconnect_cb;
 
     /* Initialize TCP/IP stack */
