@@ -36,9 +36,12 @@ static const char *TAG = "NETWORK";
 #define CAN_FRAME_MAGIC 0x01
 #define CAN_FRAME_SIZE  14
 
-/* Accumulator buffer: hold up to 8 frames worth of bytes to handle
- * recv() returning multiple frames in one call */
-#define ACCUM_SIZE      (CAN_FRAME_SIZE * 8)
+/* recv() read buffer — limits bytes consumed per recv() call */
+#define RECV_BUF_SIZE   (CAN_FRAME_SIZE * 8)    /* 112 bytes */
+
+/* Accumulator must be larger than RECV_BUF_SIZE so that leftover partial-frame
+ * bytes plus a full recv() never exceed the buffer (overflow + reset = desync) */
+#define ACCUM_SIZE      (CAN_FRAME_SIZE * 32)   /* 448 bytes */
 
 /* ============================================================
  * GLOBAL STATE
@@ -109,7 +112,7 @@ static void tcp_server_task(void *pvParameters)
 {
     uint8_t accum[ACCUM_SIZE];
     int     accum_len = 0;
-    uint8_t raw[ACCUM_SIZE];
+    uint8_t raw[RECV_BUF_SIZE];
 
     int listen_sock, client_sock;
     struct sockaddr_in server_addr, client_addr;

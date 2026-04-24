@@ -24,9 +24,12 @@ static esp_lcd_panel_handle_t s_panel = NULL;
 /* Decoded CAN state — updated by every incoming CAN frame */
 static display_data_t s_can_data;
 
-/* Commands sent from sender.py to control camera mode */
+/* Commands sent from broadcaster.py / sender.py */
 #define CMD_CAM_START   "__CAM_START__"
 #define CMD_CAM_STOP    "__CAM_STOP__"
+#define CMD_TAB_0       "__TAB_0__"
+#define CMD_TAB_1       "__TAB_1__"
+#define CMD_TAB_2       "__TAB_2__"
 
 /* Size of a binary CAN-over-TCP frame: [0x01 magic][CAN_ID 4B][DLC 1B][data 8B] */
 #define CAN_FRAME_SIZE  14
@@ -80,6 +83,13 @@ static void on_data_received(const uint8_t *data, int length)
             camera_stop();
             ui_refresh();
             ui_set_text("Waiting...");
+
+        } else if (strcmp(cmd, CMD_TAB_0) == 0) {
+            ui_set_tab(0);
+        } else if (strcmp(cmd, CMD_TAB_1) == 0) {
+            ui_set_tab(1);
+        } else if (strcmp(cmd, CMD_TAB_2) == 0) {
+            ui_set_tab(2);
         }
         return;
     }

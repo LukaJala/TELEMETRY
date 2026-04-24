@@ -53,6 +53,9 @@ ID_GPS_TIME     = 0x18FF0350
 
 MPPT_IDS = [ID_MPPT1, ID_MPPT2, ID_MPPT3, ID_MPPT4]
 
+# Tab index shown for each scenario (0=BATTERY, 1=SOLAR/MOTOR, 2=GPS/TRIP)
+SCENARIO_TAB = [0, 1, 1, 0, 0, 2]
+
 # ============================================================
 # Scenarios (mirrors C struct array)
 # ============================================================
@@ -137,6 +140,10 @@ def send_frame(can_id, payload):
     Format: [0x01 magic][CAN_ID 4B LE][DLC 1B][data 8B]"""
     pkt = b'\x01' + struct.pack('<IB', can_id, 8) + bytes(payload)
     _sock.send(pkt)
+
+def send_cmd(cmd: str):
+    """Send a null-terminated text command."""
+    _sock.send(cmd.encode() + b'\x00')
 
 # ============================================================
 # Encode helpers (direct translation of C encode functions)
@@ -434,7 +441,8 @@ def main():
     scenario_start = time.monotonic()
     last_100ms = last_200ms = last_500ms = last_1s = 0.0
 
-    print(f"Scenario 0: {SCENARIOS[0]['name']}")
+    print(f"Scenario 0: {SCENARIOS[0]['name']}  [tab {SCENARIO_TAB[0]}]")
+    send_cmd(f"__TAB_{SCENARIO_TAB[0]}__")
     print("Press Ctrl+C to stop.\n")
 
     try:
@@ -448,7 +456,9 @@ def main():
                 scenario_start = now
                 elapsed        = 0.0
                 sc             = SCENARIOS[scenario_idx]
-                print(f"Scenario {scenario_idx}: {sc['name']}")
+                tab            = SCENARIO_TAB[scenario_idx]
+                print(f"Scenario {scenario_idx}: {sc['name']}  [tab {tab}]")
+                send_cmd(f"__TAB_{tab}__")
 
             if now - last_100ms >= 0.100:
                 broadcast_100ms(sc, elapsed)

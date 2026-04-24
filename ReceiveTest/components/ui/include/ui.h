@@ -1,4 +1,5 @@
 #pragma once
+#include <stdint.h>
 #include "lvgl.h"
 #include "display_can_spec.h"
 
@@ -17,3 +18,6 @@ void ui_set_text(const char *text);
 
 /* Set the status line (shows IP address, connection status, etc.) */
 void ui_set_status(const char *status);
+
+/* Switch the right-panel tab: 0=BATTERY, 1=SOLAR/MOTOR, 2=GPS/TRIP */
+void ui_set_tab(uint8_t tab_index);

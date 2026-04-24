@@ -54,6 +54,14 @@
 #define CAN_ID_ALTAIR_GPS_NAV      0x14FF0250
 #define CAN_ID_ALTAIR_GPS_TIME     0x18FF0350
 
+/* Vega (SA=0x1E) safety cross-check */
+#define CAN_ID_VEGA_SAFETY_STATE   0x08FF111E  /* Vega_SafetyState (100ms) */
+
+/* Relayed BMS extended messages (via BPS SA=0x00) */
+#define CAN_ID_R_BMS_FAULT         0x10FF4000  /* R_BMS_Fault (100ms) */
+#define CAN_ID_R_BMS_ENERGY        0x18FF4400  /* R_BMS_Energy (30s) */
+#define CAN_ID_R_BMS_ADAPT_ENERGY  0x18FF4500  /* R_BMS_AdaptEnergy (30s) */
+
 /* =========================================================================
  * Enums
  * ========================================================================= */
@@ -89,7 +97,7 @@ typedef enum {
 } bps_fault_t;
 
 /* Human-readable fault names for display */
-static const char *BPS_FAULT_NAMES[] = {
+static const char *BPS_FAULT_NAMES[] __attribute__((unused)) = {
     "NO FAULT",
     "SUPPL UNDERVOLTAGE",
     "SUPPL OVERVOLTAGE",
@@ -537,66 +545,162 @@ static inline void display_decode_charging(display_charging_t *out, const uint8_
     out->charger_temp_c    = (int8_t)d[5] - 40;
 }
 
+/* ---- Vega_SafetyState (4B, 100ms) ----------------------------------------
+ * Byte 0: VegaState — [1:0]=SafetyState(0=Normal 1=LH 2=Failsafe)
+ *          [4:2]=ThrottleState [5]=MC_OK [6]=BPS_OK [7]=HazardReq
+ * Byte 1: ThrottleOut (0-255, actual Kelly throttle)
+ * Byte 2: LHTimer (seconds, limp-home countdown)
+ * Byte 3: StateAlive (rolling counter)
+ * ----------------------------------------------------------------------- */
+typedef struct {
+    uint8_t        vega_state;
+    safety_state_t safety_state_vega;  /* bits [1:0] of vega_state */
+    uint8_t        throttle_out;
+    uint8_t        lh_timer_s;
+    uint8_t        alive;
+} display_vega_safety_t;
+
+static inline void display_decode_vega_safety(display_vega_safety_t *out, const uint8_t d[8]) {
+    out->vega_state        = d[0];
+    out->safety_state_vega = (safety_state_t)(d[0] & 0x03);
+    out->throttle_out      = d[1];
+    out->lh_timer_s        = d[2];
+    out->alive             = d[3];
+}
+
+/* ---- R_BMS_Fault (8B, 100ms) --------------------------------------------
+ * Byte 0-1: DTC1 (fault bitfield 1)
+ * Byte 2-3: DTC2 (fault bitfield 2)
+ * Byte 4-5: Failsafe (U16) — bit 3 = CellBalancingActive
+ * Byte 6:   Severity (0=None 1=Warn 2=Crit 3=Shutdown)
+ * Byte 7:   Rolling counter
+ * ----------------------------------------------------------------------- */
+typedef struct {
+    uint16_t dtc1;
+    uint16_t dtc2;
+    uint16_t failsafe;
+    bool     cell_balancing_active;
+    uint8_t  severity;
+} display_bms_fault_t;
+
+static inline void display_decode_bms_fault(display_bms_fault_t *out, const uint8_t d[8]) {
+    out->dtc1                  = (uint16_t)(d[0] | (d[1] << 8));
+    out->dtc2                  = (uint16_t)(d[2] | (d[3] << 8));
+    out->failsafe              = (uint16_t)(d[4] | (d[5] << 8));
+    out->cell_balancing_active = (out->failsafe >> 3) & 1;
+    out->severity              = d[6];
+}
+
+/* ---- R_BMS_Energy (8B, 30s) ---------------------------------------------
+ * Byte 0-1: PackAh   (U16, factor 0.1 Ah)
+ * Byte 2-3: TotalCap (U16, factor 0.1 Ah)
+ * Byte 4:   DOD      (U8,  factor 0.5 %)
+ * Byte 5-6: PackR    (U16, factor 0.001 mΩ) — not displayed
+ * Byte 7:   Reserved
+ * ----------------------------------------------------------------------- */
+typedef struct {
+    float pack_ah;
+    float total_cap_ah;
+    float dod_pct;
+} display_bms_energy_t;
+
+static inline void display_decode_bms_energy(display_bms_energy_t *out, const uint8_t d[8]) {
+    out->pack_ah      = (float)(d[0] | (d[1] << 8)) * 0.1f;
+    out->total_cap_ah = (float)(d[2] | (d[3] << 8)) * 0.1f;
+    out->dod_pct      = (float)d[4] * 0.5f;
+}
+
+/* ---- R_BMS_AdaptEnergy (8B, 30s) ----------------------------------------
+ * Byte 0:   AdaptSOC (U8,  factor 0.5 %)
+ * Byte 1-2: AdaptAh  (U16, factor 0.1 Ah)
+ * Byte 3-4: AdaptCap (U16, factor 0.1 Ah)
+ * Byte 5-6: PackOpenV (U16, factor 0.1 V) — not displayed
+ * Byte 7:   Reserved
+ * ----------------------------------------------------------------------- */
+typedef struct {
+    float adapt_soc_pct;
+    float adapt_ah;
+    float adapt_cap_ah;
+} display_bms_adapt_energy_t;
+
+static inline void display_decode_bms_adapt_energy(display_bms_adapt_energy_t *out, const uint8_t d[8]) {
+    out->adapt_soc_pct = (float)d[0] * 0.5f;
+    out->adapt_ah      = (float)(d[1] | (d[2] << 8)) * 0.1f;
+    out->adapt_cap_ah  = (float)(d[3] | (d[4] << 8)) * 0.1f;
+}
+
 /* =========================================================================
  * Frame router — call this for every incoming CAN frame
  * ========================================================================= */
 
 typedef struct {
-    display_bps_safety_t     bps_safety;
-    display_bps_power_t      bps_power;
-    display_vega_inputs_t    vega_inputs;
-    display_vega_status_t    vega_status;
-    display_mc_status1_t     mc_status1;
-    display_mc_status2_t     mc_status2;
-    display_cell_extremes_t  cells;
-    display_temp_extremes_t  temps;
-    display_suppl_batt_t     suppl;
-    display_mppt_power_t     mppt[4];
-    display_gps_pos_t        gps_pos;
-    display_gps_nav_t        gps_nav;
-    display_gps_time_t       gps_time;
-    display_charging_t       charging;
-    uint32_t                 update_flags;  /* bitmask of which structs were updated */
+    display_bps_safety_t       bps_safety;
+    display_bps_power_t        bps_power;
+    display_vega_inputs_t      vega_inputs;
+    display_vega_status_t      vega_status;
+    display_mc_status1_t       mc_status1;
+    display_mc_status2_t       mc_status2;
+    display_cell_extremes_t    cells;
+    display_temp_extremes_t    temps;
+    display_suppl_batt_t       suppl;
+    display_mppt_power_t       mppt[4];
+    display_gps_pos_t          gps_pos;
+    display_gps_nav_t          gps_nav;
+    display_gps_time_t         gps_time;
+    display_charging_t         charging;
+    display_vega_safety_t      vega_safety;
+    display_bms_fault_t        bms_fault;
+    display_bms_energy_t       bms_energy;
+    display_bms_adapt_energy_t bms_adapt;
+    uint32_t                   update_flags;
 } display_data_t;
 
 /* Update flag bits */
-#define DFLAG_BPS_SAFETY   (1u << 0)
-#define DFLAG_BPS_POWER    (1u << 1)
-#define DFLAG_VEGA_INPUTS  (1u << 2)
-#define DFLAG_VEGA_STATUS  (1u << 3)
-#define DFLAG_MC_STATUS1   (1u << 4)
-#define DFLAG_MC_STATUS2   (1u << 5)
-#define DFLAG_CELLS        (1u << 6)
-#define DFLAG_TEMPS        (1u << 7)
-#define DFLAG_SUPPL        (1u << 8)
-#define DFLAG_MPPT1        (1u << 9)
-#define DFLAG_MPPT2        (1u << 10)
-#define DFLAG_MPPT3        (1u << 11)
-#define DFLAG_MPPT4        (1u << 12)
-#define DFLAG_GPS_POS      (1u << 13)
-#define DFLAG_GPS_NAV      (1u << 14)
-#define DFLAG_GPS_TIME     (1u << 15)
-#define DFLAG_CHARGING     (1u << 16)
+#define DFLAG_BPS_SAFETY       (1u << 0)
+#define DFLAG_BPS_POWER        (1u << 1)
+#define DFLAG_VEGA_INPUTS      (1u << 2)
+#define DFLAG_VEGA_STATUS      (1u << 3)
+#define DFLAG_MC_STATUS1       (1u << 4)
+#define DFLAG_MC_STATUS2       (1u << 5)
+#define DFLAG_CELLS            (1u << 6)
+#define DFLAG_TEMPS            (1u << 7)
+#define DFLAG_SUPPL            (1u << 8)
+#define DFLAG_MPPT1            (1u << 9)
+#define DFLAG_MPPT2            (1u << 10)
+#define DFLAG_MPPT3            (1u << 11)
+#define DFLAG_MPPT4            (1u << 12)
+#define DFLAG_GPS_POS          (1u << 13)
+#define DFLAG_GPS_NAV          (1u << 14)
+#define DFLAG_GPS_TIME         (1u << 15)
+#define DFLAG_CHARGING         (1u << 16)
+#define DFLAG_VEGA_SAFETY      (1u << 17)
+#define DFLAG_BMS_FAULT        (1u << 18)
+#define DFLAG_BMS_ENERGY       (1u << 19)
+#define DFLAG_BMS_ADAPT_ENERGY (1u << 20)
 
 static inline void display_route_frame(display_data_t *dd, uint32_t id, const uint8_t data[8]) {
     switch (id) {
-    case CAN_ID_BPS_SAFETY_STATE:    display_decode_bps_safety(&dd->bps_safety, data);    dd->update_flags |= DFLAG_BPS_SAFETY; break;
-    case CAN_ID_BPS_POWER_LIMIT:     display_decode_bps_power(&dd->bps_power, data);      dd->update_flags |= DFLAG_BPS_POWER;  break;
-    case CAN_ID_VEGA_DRIVER_INPUTS:  display_decode_vega_inputs(&dd->vega_inputs, data);  dd->update_flags |= DFLAG_VEGA_INPUTS; break;
-    case CAN_ID_VEGA_VEHICLE_STATUS: display_decode_vega_status(&dd->vega_status, data);  dd->update_flags |= DFLAG_VEGA_STATUS; break;
-    case CAN_ID_MC_STATUS1:          display_decode_mc_status1(&dd->mc_status1, data);    dd->update_flags |= DFLAG_MC_STATUS1; break;
-    case CAN_ID_MC_STATUS2:          display_decode_mc_status2(&dd->mc_status2, data);    dd->update_flags |= DFLAG_MC_STATUS2; break;
-    case CAN_ID_R_BMS_CELL_EXTREMES: display_decode_cell_extremes(&dd->cells, data);     dd->update_flags |= DFLAG_CELLS; break;
-    case CAN_ID_R_BMS_TEMP_EXTREMES: display_decode_temp_extremes(&dd->temps, data);     dd->update_flags |= DFLAG_TEMPS; break;
-    case CAN_ID_BPS_SUPPL_BATTERY:   display_decode_suppl_batt(&dd->suppl, data);        dd->update_flags |= DFLAG_SUPPL; break;
-    case CAN_ID_MPPT1_POWER_MEAS:    display_decode_mppt_power(&dd->mppt[0], data);      dd->update_flags |= DFLAG_MPPT1; break;
-    case CAN_ID_MPPT2_POWER_MEAS:    display_decode_mppt_power(&dd->mppt[1], data);      dd->update_flags |= DFLAG_MPPT2; break;
-    case CAN_ID_MPPT3_POWER_MEAS:    display_decode_mppt_power(&dd->mppt[2], data);      dd->update_flags |= DFLAG_MPPT3; break;
-    case CAN_ID_MPPT4_POWER_MEAS:    display_decode_mppt_power(&dd->mppt[3], data);      dd->update_flags |= DFLAG_MPPT4; break;
-    case CAN_ID_ALTAIR_GPS_POS:      display_decode_gps_pos(&dd->gps_pos, data);         dd->update_flags |= DFLAG_GPS_POS; break;
-    case CAN_ID_ALTAIR_GPS_NAV:      display_decode_gps_nav(&dd->gps_nav, data);         dd->update_flags |= DFLAG_GPS_NAV; break;
-    case CAN_ID_ALTAIR_GPS_TIME:     display_decode_gps_time(&dd->gps_time, data);       dd->update_flags |= DFLAG_GPS_TIME; break;
-    case CAN_ID_BPS_CHARGING_INFO:   display_decode_charging(&dd->charging, data);       dd->update_flags |= DFLAG_CHARGING; break;
+    case CAN_ID_BPS_SAFETY_STATE:    display_decode_bps_safety(&dd->bps_safety, data);         dd->update_flags |= DFLAG_BPS_SAFETY; break;
+    case CAN_ID_BPS_POWER_LIMIT:     display_decode_bps_power(&dd->bps_power, data);           dd->update_flags |= DFLAG_BPS_POWER;  break;
+    case CAN_ID_VEGA_DRIVER_INPUTS:  display_decode_vega_inputs(&dd->vega_inputs, data);       dd->update_flags |= DFLAG_VEGA_INPUTS; break;
+    case CAN_ID_VEGA_VEHICLE_STATUS: display_decode_vega_status(&dd->vega_status, data);       dd->update_flags |= DFLAG_VEGA_STATUS; break;
+    case CAN_ID_MC_STATUS1:          display_decode_mc_status1(&dd->mc_status1, data);         dd->update_flags |= DFLAG_MC_STATUS1; break;
+    case CAN_ID_MC_STATUS2:          display_decode_mc_status2(&dd->mc_status2, data);         dd->update_flags |= DFLAG_MC_STATUS2; break;
+    case CAN_ID_R_BMS_CELL_EXTREMES: display_decode_cell_extremes(&dd->cells, data);           dd->update_flags |= DFLAG_CELLS; break;
+    case CAN_ID_R_BMS_TEMP_EXTREMES: display_decode_temp_extremes(&dd->temps, data);           dd->update_flags |= DFLAG_TEMPS; break;
+    case CAN_ID_BPS_SUPPL_BATTERY:   display_decode_suppl_batt(&dd->suppl, data);              dd->update_flags |= DFLAG_SUPPL; break;
+    case CAN_ID_MPPT1_POWER_MEAS:    display_decode_mppt_power(&dd->mppt[0], data);            dd->update_flags |= DFLAG_MPPT1; break;
+    case CAN_ID_MPPT2_POWER_MEAS:    display_decode_mppt_power(&dd->mppt[1], data);            dd->update_flags |= DFLAG_MPPT2; break;
+    case CAN_ID_MPPT3_POWER_MEAS:    display_decode_mppt_power(&dd->mppt[2], data);            dd->update_flags |= DFLAG_MPPT3; break;
+    case CAN_ID_MPPT4_POWER_MEAS:    display_decode_mppt_power(&dd->mppt[3], data);            dd->update_flags |= DFLAG_MPPT4; break;
+    case CAN_ID_ALTAIR_GPS_POS:      display_decode_gps_pos(&dd->gps_pos, data);               dd->update_flags |= DFLAG_GPS_POS; break;
+    case CAN_ID_ALTAIR_GPS_NAV:      display_decode_gps_nav(&dd->gps_nav, data);               dd->update_flags |= DFLAG_GPS_NAV; break;
+    case CAN_ID_ALTAIR_GPS_TIME:     display_decode_gps_time(&dd->gps_time, data);             dd->update_flags |= DFLAG_GPS_TIME; break;
+    case CAN_ID_BPS_CHARGING_INFO:   display_decode_charging(&dd->charging, data);             dd->update_flags |= DFLAG_CHARGING; break;
+    case CAN_ID_VEGA_SAFETY_STATE:   display_decode_vega_safety(&dd->vega_safety, data);       dd->update_flags |= DFLAG_VEGA_SAFETY; break;
+    case CAN_ID_R_BMS_FAULT:         display_decode_bms_fault(&dd->bms_fault, data);           dd->update_flags |= DFLAG_BMS_FAULT; break;
+    case CAN_ID_R_BMS_ENERGY:        display_decode_bms_energy(&dd->bms_energy, data);         dd->update_flags |= DFLAG_BMS_ENERGY; break;
+    case CAN_ID_R_BMS_ADAPT_ENERGY:  display_decode_bms_adapt_energy(&dd->bms_adapt, data);   dd->update_flags |= DFLAG_BMS_ADAPT_ENERGY; break;
     }
 }
 
