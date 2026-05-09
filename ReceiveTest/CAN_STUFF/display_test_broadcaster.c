@@ -261,7 +261,7 @@ static void enc_charging(uint8_t d[8], int active, int connected,
 
 typedef struct {
     const char *name;
-    float speed;        /* km/h */
+    float speed;        /* mph */
     float throttle_pct; /* 0-1 */
     float regen_pct;    /* 0-1 */
     float pack_v;       /* V */

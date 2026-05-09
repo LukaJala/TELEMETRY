@@ -1,32 +1,34 @@
 """
-broadcaster.py
-Python port of display_test_broadcaster.c — runs on Windows.
+broadcaster.py — Lysander Display Test Broadcaster
+
 Sends simulated CAN frames over TCP to the ESP32-P4 display.
 
-Usage:
-    python broadcaster.py
+Interactive commands (type + Enter while running):
+  0-5   Pin to scenario (only that scenario runs)
+  c     Resume cycling through all scenarios
+  t     Cycle display tab (BATTERY → SOLAR/MOTOR → GPS/TRIP → ...)
+  v     Toggle camera feed on/off
 
-Cycles through 6 scenarios every 30 seconds:
-  0 - Normal cruising   (47 km/h, 72% SOC)
-  1 - Acceleration      (72 km/h, high throttle)
-  2 - Regen braking     (35 km/h, negative current)
-  3 - Warning           (low SOC, derating)
-  4 - Fault             (precharge fault, grace timer countdown)
-  5 - Charging          (parked, charger connected)
-
-Frame format (13 bytes):
-  [CAN_ID 4B little-endian][DLC 1B][payload 8B]
+Scenarios:
+  0 - Normal cruising
+  1 - Acceleration
+  2 - Regen braking
+  3 - Warning (low SOC, derating)
+  4 - Fault (precharge, grace timer)
+  5 - Charging
 """
 
 import socket
 import time
 import struct
 import math
+import threading
+import queue
 
 # ============================================================
 # Configuration
 # ============================================================
-DISPLAY_IP          = "192.168.1.100"
+DISPLAY_IP          = "192.168.2.100"
 DISPLAY_PORT        = 5000
 SCENARIO_DURATION_S = 30
 
@@ -53,11 +55,13 @@ ID_GPS_TIME     = 0x18FF0350
 
 MPPT_IDS = [ID_MPPT1, ID_MPPT2, ID_MPPT3, ID_MPPT4]
 
-# Tab index shown for each scenario (0=BATTERY, 1=SOLAR/MOTOR, 2=GPS/TRIP)
+# Tab shown automatically when cycling to each scenario
 SCENARIO_TAB = [0, 1, 1, 0, 0, 2]
 
+TAB_NAMES = ["BATTERY", "SOLAR/MOTOR", "GPS/TRIP"]
+
 # ============================================================
-# Scenarios (mirrors C struct array)
+# Scenarios
 # ============================================================
 SCENARIOS = [
     {
@@ -136,17 +140,14 @@ def tcp_connect():
     print(f"Connected to {DISPLAY_IP}:{DISPLAY_PORT}")
 
 def send_frame(can_id, payload):
-    """Pack and send one 14-byte CAN-over-TCP frame.
-    Format: [0x01 magic][CAN_ID 4B LE][DLC 1B][data 8B]"""
     pkt = b'\x01' + struct.pack('<IB', can_id, 8) + bytes(payload)
     _sock.send(pkt)
 
 def send_cmd(cmd: str):
-    """Send a null-terminated text command."""
     _sock.send(cmd.encode() + b'\x00')
 
 # ============================================================
-# Encode helpers (direct translation of C encode functions)
+# Encode helpers
 # ============================================================
 _alive = 0
 
@@ -418,47 +419,128 @@ def broadcast_1s(sc, elapsed_s):
     send_frame(ID_GPS_TIME, enc_gps_time(14, 32 + (sec // 60) % 60, sec % 60, True, 1.2))
 
 # ============================================================
+# Non-blocking input thread
+# ============================================================
+_cmd_queue = queue.Queue()
+
+def _input_thread():
+    while True:
+        try:
+            line = input().strip().lower()
+            if line:
+                _cmd_queue.put(line)
+        except EOFError:
+            break
+
+_current_tab = 0
+_cam_active  = False
+
+def _switch_scenario(idx, pin_label):
+    global _current_tab
+    sc  = SCENARIOS[idx]
+    tab = SCENARIO_TAB[idx]
+    _current_tab = tab
+    print(f"  Scenario {idx}: {sc['name']}  [{TAB_NAMES[tab]}]  {pin_label}")
+    send_cmd(f"__TAB_{tab}__")
+    return idx, time.monotonic()
+
+def _print_help():
+    print()
+    print("  ┌─────────────────────────────────────────────────┐")
+    print("  │  SCENARIO KEYS  (pin to one; only it loops)     │")
+    print("  │                                                  │")
+    for i, sc in enumerate(SCENARIOS):
+        tab_name = {0: "BATT", 1: "SOLAR", 2: "GPS"}[SCENARIO_TAB[i]]
+        print(f"  │  [{i}]  {sc['name']:<30s}  [{tab_name}]  │")
+    print("  │                                                  │")
+    print("  │  [c]   Resume cycling through all scenarios      │")
+    print("  ├─────────────────────────────────────────────────┤")
+    print("  │  [t]   Cycle display tab (BATTERY → SOLAR →     │")
+    print("  │         GPS/TRIP → BATTERY ...)                  │")
+    print("  │  [v]   Toggle camera feed on/off                 │")
+    print("  └─────────────────────────────────────────────────┘")
+    print()
+
+# ============================================================
 # Entry point
 # ============================================================
 def main():
     print("=" * 52)
-    print("  Lysander Display Test Broadcaster (Python)")
+    print("  Lysander Display Test Broadcaster")
     print("=" * 52)
     print(f"  Target : {DISPLAY_IP}:{DISPLAY_PORT}")
-    print(f"  Laptop Ethernet must be set to 192.168.1.1")
+    print(f"  W5500-side Ethernet adapter must be set to 192.168.2.1")
     print("=" * 52)
-    print()
+    _print_help()
 
     while True:
         try:
             tcp_connect()
             break
         except Exception as e:
-            print(f"Connection failed ({e}) — retrying in 2s...")
+            print(f"  Connection failed ({e}) — retrying in 2s...")
             time.sleep(2)
 
+    # Start background input thread
+    t = threading.Thread(target=_input_thread, daemon=True)
+    t.start()
+
     scenario_idx   = 0
+    pin_scenario   = None          # None = cycling, int = pinned
     scenario_start = time.monotonic()
     last_100ms = last_200ms = last_500ms = last_1s = 0.0
 
-    print(f"Scenario 0: {SCENARIOS[0]['name']}  [tab {SCENARIO_TAB[0]}]")
-    send_cmd(f"__TAB_{SCENARIO_TAB[0]}__")
-    print("Press Ctrl+C to stop.\n")
+    scenario_idx, scenario_start = _switch_scenario(0, "(cycling)")
+    print("  Ctrl+C to stop.\n")
 
     try:
         while True:
             now     = time.monotonic()
             elapsed = now - scenario_start
-            sc      = SCENARIOS[scenario_idx]
 
-            if elapsed >= SCENARIO_DURATION_S:
-                scenario_idx   = (scenario_idx + 1) % len(SCENARIOS)
-                scenario_start = now
-                elapsed        = 0.0
-                sc             = SCENARIOS[scenario_idx]
-                tab            = SCENARIO_TAB[scenario_idx]
-                print(f"Scenario {scenario_idx}: {sc['name']}  [tab {tab}]")
-                send_cmd(f"__TAB_{tab}__")
+            # ── Process any queued commands ──────────────────────────────
+            while not _cmd_queue.empty():
+                cmd = _cmd_queue.get_nowait()
+
+                if cmd in ('0','1','2','3','4','5'):
+                    new_idx = int(cmd)
+                    pin_scenario = new_idx
+                    scenario_idx, scenario_start = _switch_scenario(new_idx, "(pinned)")
+                    elapsed = 0.0
+
+                elif cmd == 'c':
+                    pin_scenario = None
+                    print(f"  Cycling mode — next advance in "
+                          f"{max(0, SCENARIO_DURATION_S - elapsed):.0f}s")
+
+                elif cmd == 't':
+                    global _current_tab
+                    _current_tab = (_current_tab + 1) % len(TAB_NAMES)
+                    send_cmd(f"__TAB_{_current_tab}__")
+                    print(f"  Tab -> {TAB_NAMES[_current_tab]}")
+
+                elif cmd == 'v':
+                    global _cam_active
+                    _cam_active = not _cam_active
+                    if _cam_active:
+                        send_cmd("__CAM_START__")
+                        print("  Camera ON")
+                    else:
+                        send_cmd("__CAM_STOP__")
+                        print("  Camera OFF")
+
+                else:
+                    print(f"  Unknown command '{cmd}'")
+                    _print_help()
+
+            # ── Scenario advance (cycling mode only) ─────────────────────
+            if pin_scenario is None and elapsed >= SCENARIO_DURATION_S:
+                scenario_idx = (scenario_idx + 1) % len(SCENARIOS)
+                scenario_idx, scenario_start = _switch_scenario(scenario_idx, "(cycling)")
+                elapsed = 0.0
+
+            # ── Broadcast ────────────────────────────────────────────────
+            sc = SCENARIOS[scenario_idx]
 
             if now - last_100ms >= 0.100:
                 broadcast_100ms(sc, elapsed)
@@ -479,9 +561,9 @@ def main():
             time.sleep(0.01)
 
     except KeyboardInterrupt:
-        print("\nStopped.")
+        print("\n  Stopped.")
     except Exception as e:
-        print(f"\nError: {e}")
+        print(f"\n  Error: {e}")
     finally:
         if _sock:
             _sock.close()

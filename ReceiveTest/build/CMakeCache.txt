@@ -358,9 +358,6 @@ ReceiveTest_IS_TOP_LEVEL:STATIC=ON
 //Value Computed by CMake
 ReceiveTest_SOURCE_DIR:STATIC=C:/D-Drive/School/MSU/Solar Car/code/ESP32Stuff/ReceiveTest
 
-//No help, variable specified on the command line.
-SDKCONFIG:UNINITIALIZED=c:\D-Drive\School\MSU\Solar Car\code\ESP32Stuff\ReceiveTest\sdkconfig
-
 //Allow unsafe builds. These builds ARE NOT SECURE.
 UNSAFE_BUILD:BOOL=OFF
 

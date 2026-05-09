@@ -9,4 +9,5 @@ idf_component_register(
         esp_eth
         esp_event
         lwip
+        driver
 )

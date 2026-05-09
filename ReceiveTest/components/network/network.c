@@ -16,6 +16,9 @@
 #include "esp_event.h"
 #include "esp_netif.h"
 #include "esp_eth.h"
+#include "esp_eth_mac_spi.h"
+#include "driver/spi_master.h"
+#include "driver/gpio.h"
 
 /* For TCP sockets */
 #include "lwip/sockets.h"
@@ -25,10 +28,23 @@ static const char *TAG = "NETWORK";
 /* ============================================================
  * CONFIGURATION - Change these if needed
  * ============================================================ */
-#define STATIC_IP       "192.168.1.100"   /* ESP32's IP address */
-#define STATIC_GATEWAY  "192.168.1.1"     /* Your laptop's IP */
-#define STATIC_NETMASK  "255.255.255.0"   /* Subnet mask */
-#define TCP_PORT        5000               /* Port to listen on */
+#define STATIC_IP       "192.168.1.100"   /* ESP32 IP on IP101 interface */
+#define STATIC_GATEWAY  "192.168.1.1"     /* Laptop IP on IP101 side */
+#define STATIC_NETMASK  "255.255.255.0"
+#define TCP_PORT        5000
+
+/* W5500 SPI Ethernet (second interface) */
+#define W5500_STATIC_IP     "192.168.2.100"
+#define W5500_GATEWAY       "192.168.2.1"   /* Laptop IP on W5500 side */
+
+#define W5500_MOSI_GPIO     23
+#define W5500_MISO_GPIO     22
+#define W5500_SCLK_GPIO     21
+#define W5500_CS_GPIO       24
+#define W5500_INT_GPIO      25
+#define W5500_RST_GPIO      33
+#define W5500_SPI_HOST      SPI2_HOST
+#define W5500_SPI_MHZ       8
 
 /* CAN frame over TCP is exactly 14 bytes: [0x01 magic][CAN_ID 4B][DLC 1B][data 8B]
  * The 0x01 prefix distinguishes binary frames from text commands, which are always
@@ -237,6 +253,80 @@ static void tcp_server_task(void *pvParameters)
 }
 
 /* ============================================================
+ * W5500 SPI ETHERNET INITIALIZATION
+ * Second network interface — laptop connects via W5500 RJ45
+ * ESP32 IP on this interface: 192.168.2.100
+ * Set laptop's W5500-side Ethernet adapter to 192.168.2.1
+ * ============================================================ */
+static esp_err_t init_w5500(void)
+{
+    gpio_install_isr_service(0);
+
+    spi_bus_config_t buscfg = {
+        .mosi_io_num   = W5500_MOSI_GPIO,
+        .miso_io_num   = W5500_MISO_GPIO,
+        .sclk_io_num   = W5500_SCLK_GPIO,
+        .quadwp_io_num = -1,
+        .quadhd_io_num = -1,
+    };
+    ESP_ERROR_CHECK(spi_bus_initialize(W5500_SPI_HOST, &buscfg, SPI_DMA_CH_AUTO));
+
+    spi_device_interface_config_t devcfg = {
+        .command_bits   = 16,
+        .address_bits   = 8,
+        .mode           = 0,
+        .clock_speed_hz = W5500_SPI_MHZ * 1000 * 1000,
+        .spics_io_num   = W5500_CS_GPIO,
+        .queue_size     = 20,
+    };
+
+    eth_w5500_config_t w5500_cfg = ETH_W5500_DEFAULT_CONFIG(W5500_SPI_HOST, &devcfg);
+    w5500_cfg.int_gpio_num = W5500_INT_GPIO;
+
+    eth_mac_config_t mac_cfg = ETH_MAC_DEFAULT_CONFIG();
+    eth_phy_config_t phy_cfg = ETH_PHY_DEFAULT_CONFIG();
+    phy_cfg.reset_gpio_num  = W5500_RST_GPIO;
+
+    esp_eth_mac_t *mac = esp_eth_mac_new_w5500(&w5500_cfg, &mac_cfg);
+    esp_eth_phy_t *phy = esp_eth_phy_new_w5500(&phy_cfg);
+
+    esp_eth_config_t eth_cfg = ETH_DEFAULT_CONFIG(mac, phy);
+    esp_eth_handle_t eth_handle = NULL;
+    esp_err_t err = esp_eth_driver_install(&eth_cfg, &eth_handle);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "W5500 init failed (0x%x) — check wiring. IP101 still active.", err);
+        esp_log_level_set("w5500.mac", ESP_LOG_NONE);
+        return err;
+    }
+
+    /* Create a separate netif with a unique key so it doesn't conflict with IP101 */
+    esp_netif_inherent_config_t w5500_base = ESP_NETIF_INHERENT_DEFAULT_ETH();
+    w5500_base.if_key    = "ETH_SPI_0";
+    w5500_base.if_desc   = "eth_spi";
+    w5500_base.route_prio = 30;  /* lower than IP101 (50) */
+
+    esp_netif_config_t w5500_netif_cfg = {
+        .base  = &w5500_base,
+        .stack = ESP_NETIF_NETSTACK_DEFAULT_ETH,
+    };
+    esp_netif_t *w5500_netif = esp_netif_new(&w5500_netif_cfg);
+
+    ESP_ERROR_CHECK(esp_netif_dhcpc_stop(w5500_netif));
+
+    esp_netif_ip_info_t ip_info = {};
+    ip_info.ip.addr      = esp_ip4addr_aton(W5500_STATIC_IP);
+    ip_info.gw.addr      = esp_ip4addr_aton(W5500_GATEWAY);
+    ip_info.netmask.addr = esp_ip4addr_aton(STATIC_NETMASK);
+    ESP_ERROR_CHECK(esp_netif_set_ip_info(w5500_netif, &ip_info));
+
+    ESP_ERROR_CHECK(esp_netif_attach(w5500_netif, esp_eth_new_netif_glue(eth_handle)));
+    ESP_ERROR_CHECK(esp_eth_start(eth_handle));
+
+    ESP_LOGI(TAG, "W5500 initialized at %s", W5500_STATIC_IP);
+    return ESP_OK;
+}
+
+/* ============================================================
  * ETHERNET INITIALIZATION
  * Sets up the hardware, static IP, and starts TCP server
  * ============================================================ */
@@ -310,6 +400,13 @@ esp_err_t network_init(network_data_callback_t data_cb,
 
     /* Start Ethernet */
     ESP_ERROR_CHECK(esp_eth_start(eth_handle));
+
+    /* --------------------------------------------------------
+     * Initialize W5500 SPI Ethernet (second interface)
+     * -------------------------------------------------------- */
+    if (init_w5500() != ESP_OK) {
+        ESP_LOGW(TAG, "W5500 unavailable — running on IP101 only");
+    }
 
     /* --------------------------------------------------------
      * Start TCP server in a background task

@@ -21,6 +21,8 @@
 #include <stdio.h>
 #include <string.h>
 
+extern const lv_font_t lv_font_montserrat_72;
+
 /* =========================================================================
  * Colors
  * ========================================================================= */
@@ -49,9 +51,10 @@
 #define RIGHT_X      LEFT_W
 #define RIGHT_W      (SCR_W - LEFT_W)   /* 900 */
 #define TAB_H         50
-#define DOT_SZ        20
+#define DOT_SZ        26   /* main status indicator dots */
+#define DOT_SZ_SM     18   /* contactor / precharge dots */
 #define BAR_H         20
-#define TBAR_W       160    /* throttle/regen bar width each */
+#define TBAR_W       ((LEFT_W - 2 * LP_PAD - 8) / 2)  /* throttle/regen bar width each (~172px) */
 #define CELL_BAR_W   840    /* cell voltage range bar width */
 #define MPPT_BAR_W   280    /* per-MPPT bar width */
 
@@ -63,21 +66,21 @@
  * ========================================================================= */
 static lv_obj_t *lbl_drive_mode   = NULL;
 
-/* Status dots row 1: Fault, Warn, DCDC, Batt, MC */
+/* System status dots: Fault, Warn, DCDC, Batt, MC */
 static lv_obj_t *dot_fault        = NULL;
 static lv_obj_t *dot_warn         = NULL;
 static lv_obj_t *dot_dcdc_sys     = NULL;
 static lv_obj_t *dot_batt_sys     = NULL;
 static lv_obj_t *dot_mc_sys       = NULL;
 
-/* Status dots row 2: HV+, HV-, MC relay, WC, DCDC relay */
+/* Contactor relay dots: HV+, HV-, MC, WC, DCDC */
 static lv_obj_t *dot_hv_pos       = NULL;
 static lv_obj_t *dot_hv_neg       = NULL;
 static lv_obj_t *dot_mc_relay     = NULL;
 static lv_obj_t *dot_wc_relay     = NULL;
 static lv_obj_t *dot_dcdc_relay   = NULL;
 
-/* Precharge / HV Ready inline dots */
+/* Precharge / HV Ready */
 static lv_obj_t *dot_prech        = NULL;
 static lv_obj_t *dot_hv_rdy       = NULL;
 
@@ -104,6 +107,7 @@ static lv_obj_t *lbl_batt_hi_temp   = NULL;
 static lv_obj_t *lbl_batt_lo_temp   = NULL;
 static lv_obj_t *lbl_batt_soh       = NULL;
 static lv_obj_t *lbl_batt_spread    = NULL;
+static lv_obj_t *cell_range_fill    = NULL;   /* green fill between lo and hi ticks */
 static lv_obj_t *tick_cell_hi       = NULL;   /* orange tick on cell range bar */
 static lv_obj_t *tick_cell_lo       = NULL;
 static lv_obj_t *dot_bal_active     = NULL;
@@ -216,30 +220,13 @@ static lv_obj_t *make_lbl(lv_obj_t *parent,
 }
 
 /* =========================================================================
- * Helper: label centered in parent with y offset from top
- * ========================================================================= */
-static lv_obj_t *make_lbl_top_mid(lv_obj_t *parent,
-                                   const char *text,
-                                   lv_color_t color,
-                                   const lv_font_t *font,
-                                   int y)
-{
-    lv_obj_t *l = lv_label_create(parent);
-    lv_label_set_text(l, text);
-    lv_obj_set_style_text_color(l, color, LV_PART_MAIN);
-    lv_obj_set_style_text_font(l, font, LV_PART_MAIN);
-    lv_obj_align(l, LV_ALIGN_TOP_MID, 0, y);
-    return l;
-}
-
-/* =========================================================================
  * Helper: status dot (round, solid, no border)
  * ========================================================================= */
-static lv_obj_t *make_dot(lv_obj_t *parent, int x, int y, lv_color_t color)
+static lv_obj_t *make_dot(lv_obj_t *parent, int x, int y, lv_color_t color, int sz)
 {
     lv_obj_t *d = lv_obj_create(parent);
     lv_obj_set_pos(d, x, y);
-    lv_obj_set_size(d, DOT_SZ, DOT_SZ);
+    lv_obj_set_size(d, sz, sz);
     lv_obj_set_style_radius(d, LV_RADIUS_CIRCLE, LV_PART_MAIN);
     lv_obj_set_style_bg_color(d, color, LV_PART_MAIN);
     lv_obj_set_style_bg_opa(d, LV_OPA_COVER, LV_PART_MAIN);
@@ -278,90 +265,136 @@ static lv_obj_t *tab_val(lv_obj_t *parent, const char *cap, const char *init,
 }
 
 /* =========================================================================
- * Build left panel
+ * Helper: thin horizontal divider line
+ * ========================================================================= */
+static void make_divider(lv_obj_t *parent, int y)
+{
+    lv_obj_t *d = lv_obj_create(parent);
+    lv_obj_set_pos(d, LP_PAD, y);
+    lv_obj_set_size(d, LEFT_W - 2 * LP_PAD, 1);
+    lv_obj_set_style_bg_color(d, C_DIV, LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(d, LV_OPA_COVER, LV_PART_MAIN);
+    lv_obj_set_style_border_width(d, 0, LV_PART_MAIN);
+    lv_obj_clear_flag(d, LV_OBJ_FLAG_SCROLLABLE);
+}
+
+/* =========================================================================
+ * Helper: centered dot row — creates N dots + labels, returns nothing.
+ * lbl_w: fixed pixel width of each label cell (for center-align under dot).
+ * ========================================================================= */
+static void make_dot_row(lv_obj_t *parent, int y, int sz,
+                          lv_obj_t **handles, const char **labels, int n)
+{
+    int gap      = 28;
+    int spacing  = sz + gap;
+    int row_w    = n * sz + (n - 1) * gap;
+    int x0       = (LEFT_W - row_w) / 2;
+    int lbl_cell = sz + gap;
+
+    for (int i = 0; i < n; i++) {
+        handles[i] = make_dot(parent, x0 + i * spacing, y, C_DGRAY, sz);
+        lv_obj_t *l = lv_label_create(parent);
+        lv_label_set_text(l, labels[i]);
+        lv_obj_set_style_text_color(l, C_GRAY, LV_PART_MAIN);
+        lv_obj_set_style_text_font(l, &lv_font_montserrat_14, LV_PART_MAIN);
+        lv_obj_set_pos(l, x0 + i * spacing - (lbl_cell - sz) / 2, y + sz + 3);
+        lv_obj_set_width(l, lbl_cell);
+        lv_obj_set_style_text_align(l, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+    }
+}
+
+/* =========================================================================
+ * Build left panel — Driver HUD
+ *
+ * Layout (y, 380×800):
+ *   10  : Drive mode (top-left, 32px)
+ *   50  : Speed (72px, centered) — "mph" inset to the right at digit baseline
+ *  158  : Power (48px, centered)
+ *  220  : STATUS label + 5 system dots (26px) + labels
+ *  295  : CONTACTORS label + 5 relay dots (18px) + labels
+ *  354  : Precharge / HV Ready inline row
+ *  382  : ─ divider ─
+ *  392  : SOC label + %
+ *  420  : SOC bar
+ *  454  : ─ divider ─
+ *  467  : THROTTLE / REGEN labels
+ *  485  : throttle bar + regen bar
+ *  517  : Odometer + 24V
+ *  537  : Status / IP label
+ *  745  : Warning strip
  * ========================================================================= */
 static void build_left_panel(lv_obj_t *scr)
 {
     lv_obj_t *lp = make_panel(scr, 0, 0, LEFT_W, SCR_H, C_PANEL);
 
-    /* -- Drive mode top-left -- */
-    lbl_drive_mode = make_lbl(lp, "---", C_GRAY, &lv_font_montserrat_32, LP_PAD, 8);
+    /* ── Drive mode (top-left) ─────────────────────────────────────────── */
+    lbl_drive_mode = make_lbl(lp, "PARK", C_GRAY, &lv_font_montserrat_32, LP_PAD, 10);
 
-    /* -- Speed -- */
-    make_lbl(lp, "SPEED", C_GRAY, &lv_font_montserrat_14, 0, 52);
-    lv_obj_set_width(lv_obj_get_child(lp, -1), LEFT_W);
-    lv_obj_set_style_text_align(lv_obj_get_child(lp, -1), LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
-
+    /* ── Speed (72px, centered) ────────────────────────────────────────── */
     lbl_speed = lv_label_create(lp);
     lv_label_set_text(lbl_speed, "--");
     lv_obj_set_style_text_color(lbl_speed, C_WHITE, LV_PART_MAIN);
-    lv_obj_set_style_text_font(lbl_speed, &lv_font_montserrat_48, LV_PART_MAIN);
-    lv_obj_align(lbl_speed, LV_ALIGN_TOP_MID, 0, 68);
+    lv_obj_set_style_text_font(lbl_speed, &lv_font_montserrat_72, LV_PART_MAIN);
+    lv_obj_align(lbl_speed, LV_ALIGN_TOP_MID, 0, 50);
 
-    /* km/h */
-    lv_obj_t *lbl_kmh = lv_label_create(lp);
-    lv_label_set_text(lbl_kmh, "km/h");
-    lv_obj_set_style_text_color(lbl_kmh, C_GRAY, LV_PART_MAIN);
-    lv_obj_set_style_text_font(lbl_kmh, &lv_font_montserrat_24, LV_PART_MAIN);
-    lv_obj_align(lbl_kmh, LV_ALIGN_TOP_MID, 0, 125);
+    /* "mph" centered directly below the speed number */
+    lv_obj_t *lbl_unit = lv_label_create(lp);
+    lv_label_set_text(lbl_unit, "mph");
+    lv_obj_set_style_text_color(lbl_unit, C_GRAY, LV_PART_MAIN);
+    lv_obj_set_style_text_font(lbl_unit, &lv_font_montserrat_24, LV_PART_MAIN);
+    lv_obj_align(lbl_unit, LV_ALIGN_TOP_MID, 0, 140);
 
-    /* -- Power -- */
+    /* ── Power (48px, centered) ────────────────────────────────────────── */
     lbl_power = lv_label_create(lp);
     lv_label_set_text(lbl_power, "--.- kW");
     lv_obj_set_style_text_color(lbl_power, C_WHITE, LV_PART_MAIN);
     lv_obj_set_style_text_font(lbl_power, &lv_font_montserrat_48, LV_PART_MAIN);
-    lv_obj_align(lbl_power, LV_ALIGN_TOP_MID, 0, 155);
+    lv_obj_align(lbl_power, LV_ALIGN_TOP_MID, 0, 175);
 
-    /* -- Status dots (under power) -- */
-    /* Row labels */
-    make_lbl(lp, "STATUS", C_GRAY, &lv_font_montserrat_14, LP_PAD, 218);
-    make_lbl(lp, "RELAYS", C_GRAY, &lv_font_montserrat_14, LP_PAD, 258);
-
-    /* Row 1: Fault, Warn, DCDC, Batt, MC — spaced across LEFT_W */
-    int dot_y1 = 235, dot_y2 = 275;
-    int spacing = (LEFT_W - 2 * LP_PAD - DOT_SZ) / 4;  /* ~84px */
-    for (int i = 0; i < 5; i++) {
-        int dx = LP_PAD + i * spacing;
-        switch (i) {
-        case 0: dot_fault    = make_dot(lp, dx, dot_y1, C_DGRAY); break;
-        case 1: dot_warn     = make_dot(lp, dx, dot_y1, C_DGRAY); break;
-        case 2: dot_dcdc_sys = make_dot(lp, dx, dot_y1, C_DGRAY); break;
-        case 3: dot_batt_sys = make_dot(lp, dx, dot_y1, C_DGRAY); break;
-        case 4: dot_mc_sys   = make_dot(lp, dx, dot_y1, C_DGRAY); break;
-        }
-    }
-    /* Tiny labels under dots */
-    static const char *r1_lbl[] = {"F","W","DC","B","MC"};
-    for (int i = 0; i < 5; i++) {
-        int dx = LP_PAD + i * spacing;
-        make_lbl(lp, r1_lbl[i], C_GRAY, &lv_font_montserrat_14, dx, dot_y1 + DOT_SZ + 1);
+    /* ── System status dots (Fault/Warn/DCDC/Batt/MC) ─────────────────── */
+    make_lbl(lp, "STATUS", C_GRAY, &lv_font_montserrat_14, LP_PAD, 222);
+    {
+        lv_obj_t *h[5];
+        static const char *lbl[5] = {"FAULT","WARN","DCDC","BATT","MC"};
+        make_dot_row(lp, 240, DOT_SZ, h, lbl, 5);
+        dot_fault    = h[0];
+        dot_warn     = h[1];
+        dot_dcdc_sys = h[2];
+        dot_batt_sys = h[3];
+        dot_mc_sys   = h[4];
     }
 
-    /* Row 2: HV+, HV-, MC, WC, DCDC */
-    for (int i = 0; i < 5; i++) {
-        int dx = LP_PAD + i * spacing;
-        switch (i) {
-        case 0: dot_hv_pos    = make_dot(lp, dx, dot_y2, C_DGRAY); break;
-        case 1: dot_hv_neg    = make_dot(lp, dx, dot_y2, C_DGRAY); break;
-        case 2: dot_mc_relay  = make_dot(lp, dx, dot_y2, C_DGRAY); break;
-        case 3: dot_wc_relay  = make_dot(lp, dx, dot_y2, C_DGRAY); break;
-        case 4: dot_dcdc_relay= make_dot(lp, dx, dot_y2, C_DGRAY); break;
-        }
-    }
-    static const char *r2_lbl[] = {"HV+","HV-","MC","WC","DC"};
-    for (int i = 0; i < 5; i++) {
-        int dx = LP_PAD + i * spacing;
-        make_lbl(lp, r2_lbl[i], C_GRAY, &lv_font_montserrat_14, dx, dot_y2 + DOT_SZ + 1);
+    /* ── Contactor relay dots (HV+/HV-/MC/WC/DCDC) ────────────────────── */
+    make_lbl(lp, "CONTACTORS", C_GRAY, &lv_font_montserrat_14, LP_PAD, 296);
+    {
+        lv_obj_t *h[5];
+        static const char *lbl[5] = {"HV+","HV-","MC","WC","DCDC"};
+        make_dot_row(lp, 312, DOT_SZ_SM, h, lbl, 5);
+        dot_hv_pos    = h[0];
+        dot_hv_neg    = h[1];
+        dot_mc_relay  = h[2];
+        dot_wc_relay  = h[3];
+        dot_dcdc_relay= h[4];
     }
 
-    /* -- Precharge / HV_Ready -- */
-    make_lbl(lp, "PRECH:", C_GRAY, &lv_font_montserrat_14, LP_PAD, 316);
-    dot_prech = make_dot(lp, LP_PAD + 60, 314, C_DGRAY);
-    make_lbl(lp, "HV RDY:", C_GRAY, &lv_font_montserrat_14, LP_PAD + 100, 316);
-    dot_hv_rdy = make_dot(lp, LP_PAD + 168, 314, C_DGRAY);
+    /* ── Precharge / HV Ready inline ───────────────────────────────────── */
+    /* Centered: [●] PRECH   [●] HV RDY */
+    /* Total width: (18+6+42) + 20 + (18+6+48) = 158px → x0 = (380-158)/2 = 111 */
+    {
+        int pc_y  = 354;
+        int x0    = 108;
+        dot_prech  = make_dot(lp, x0,       pc_y, C_DGRAY, DOT_SZ_SM);
+        make_lbl(lp, "PRECH",  C_GRAY, &lv_font_montserrat_14, x0 + DOT_SZ_SM + 5, pc_y + 2);
+        dot_hv_rdy = make_dot(lp, x0 + 100, pc_y, C_DGRAY, DOT_SZ_SM);
+        make_lbl(lp, "HV RDY", C_GRAY, &lv_font_montserrat_14, x0 + 100 + DOT_SZ_SM + 5, pc_y + 2);
+    }
 
-    /* -- SOC horizontal bar -- */
-    make_lbl(lp, "SOC", C_GRAY, &lv_font_montserrat_14, LP_PAD, 344);
+    make_divider(lp, 384);
+
+    /* ── SOC: label left + % right, bar below ──────────────────────────── */
+    make_lbl(lp, "SOC", C_GRAY, &lv_font_montserrat_14, LP_PAD, 395);
+    lbl_soc = make_lbl(lp, "--%", C_GREEN, &lv_font_montserrat_32,
+                       LEFT_W - LP_PAD - 62, 389);
 
     bar_soc = lv_bar_create(lp);
     lv_obj_set_size(bar_soc, LEFT_W - 2 * LP_PAD, BAR_H + 4);
@@ -372,32 +405,32 @@ static void build_left_panel(lv_obj_t *scr)
     lv_obj_set_style_bg_color(bar_soc, C_GREEN, LV_PART_INDICATOR);
     lv_obj_set_style_radius(bar_soc, 4, LV_PART_MAIN);
     lv_obj_set_style_radius(bar_soc, 4, LV_PART_INDICATOR);
-    lv_obj_set_pos(bar_soc, LP_PAD, 362);
+    lv_obj_set_pos(bar_soc, LP_PAD, 422);
 
-    lbl_soc = make_lbl_top_mid(lp, "--%", C_GREEN, &lv_font_montserrat_32, 390);
+    make_divider(lp, 456);
 
-    /* -- Throttle bar (L→R green) and Regen bar (R→L blue) -- */
-    make_lbl(lp, "THROTTLE", C_GRAY, &lv_font_montserrat_14, LP_PAD, 445);
-    make_lbl(lp, "REGEN",    C_GRAY, &lv_font_montserrat_14, LEFT_W - LP_PAD - TBAR_W, 445);
+    /* ── Throttle (L→R green) + Regen (R→L blue) side by side ─────────── */
+    int bar_w = (LEFT_W - 2 * LP_PAD - 8) / 2;
 
-    /* Throttle: lv_bar */
+    make_lbl(lp, "THROTTLE", C_GRAY, &lv_font_montserrat_14, LP_PAD, 468);
+    make_lbl(lp, "REGEN",    C_GRAY, &lv_font_montserrat_14,
+             LP_PAD + bar_w + 8, 468);
+
     bar_throttle = lv_bar_create(lp);
-    lv_obj_set_size(bar_throttle, TBAR_W, BAR_H);
+    lv_obj_set_size(bar_throttle, bar_w, BAR_H);
     lv_bar_set_range(bar_throttle, 0, 255);
     lv_bar_set_value(bar_throttle, 0, LV_ANIM_OFF);
     lv_obj_set_style_bg_color(bar_throttle, C_DIV, LV_PART_MAIN);
     lv_obj_set_style_bg_color(bar_throttle, C_GREEN, LV_PART_INDICATOR);
     lv_obj_set_style_radius(bar_throttle, 4, LV_PART_MAIN);
     lv_obj_set_style_radius(bar_throttle, 4, LV_PART_INDICATOR);
-    lv_obj_set_pos(bar_throttle, LP_PAD, 463);
+    lv_obj_set_pos(bar_throttle, LP_PAD, 486);
 
-    /* Regen: manual container + fill */
-    lv_obj_t *regen_bg = make_panel(lp,
-        LEFT_W - LP_PAD - TBAR_W, 463, TBAR_W, BAR_H, C_DIV);
+    lv_obj_t *regen_bg = make_panel(lp, LP_PAD + bar_w + 8, 486, bar_w, BAR_H, C_DIV);
     lv_obj_set_style_radius(regen_bg, 4, LV_PART_MAIN);
     regen_fill = lv_obj_create(regen_bg);
     lv_obj_set_size(regen_fill, 0, BAR_H);
-    lv_obj_set_pos(regen_fill, TBAR_W, 0);
+    lv_obj_set_pos(regen_fill, bar_w, 0);
     lv_obj_set_style_bg_color(regen_fill, C_BLUE, LV_PART_MAIN);
     lv_obj_set_style_bg_opa(regen_fill, LV_OPA_COVER, LV_PART_MAIN);
     lv_obj_set_style_border_width(regen_fill, 0, LV_PART_MAIN);
@@ -405,16 +438,16 @@ static void build_left_panel(lv_obj_t *scr)
     lv_obj_set_style_radius(regen_fill, 0, LV_PART_MAIN);
     lv_obj_clear_flag(regen_fill, LV_OBJ_FLAG_SCROLLABLE);
 
-    /* -- Odometer + 24V -- */
-    lbl_odo = make_lbl(lp, "ODO -- km",  C_GRAY, &lv_font_montserrat_14, LP_PAD, 500);
+    /* ── Odometer + 24V ────────────────────────────────────────────────── */
+    lbl_odo = make_lbl(lp, "ODO -- km",  C_GRAY, &lv_font_montserrat_14, LP_PAD, 519);
     lbl_24v = make_lbl(lp, "24V --.- V", C_GRAY, &lv_font_montserrat_14,
-                       LEFT_W / 2, 500);
+                       LEFT_W / 2, 519);
 
-    /* -- Status label (IP / connection) -- */
+    /* ── Status / IP label ─────────────────────────────────────────────── */
     status_label = make_lbl(lp, "Initializing...", C_GRAY,
-                             &lv_font_montserrat_14, LP_PAD, 520);
+                             &lv_font_montserrat_14, LP_PAD, 539);
 
-    /* -- Warning strip (hidden; shown at very bottom when derating) -- */
+    /* ── Warning strip (hidden; shown on derating) ─────────────────────── */
     warn_strip = make_panel(lp, 0, SCR_H - 55, LEFT_W, 55, C_AMBER);
     lv_obj_add_flag(warn_strip, LV_OBJ_FLAG_HIDDEN);
     lv_obj_t *warn_lbl = lv_label_create(warn_strip);
@@ -447,11 +480,14 @@ static void build_right_panel(lv_obj_t *scr)
     lv_obj_set_style_border_color(tab_bar, C_DIV, LV_PART_MAIN);
     lv_obj_set_style_border_width(tab_bar, 2, LV_PART_MAIN);
 
-    /* Inactive tab items: bright text, transparent background */
-    lv_obj_set_style_text_color(tab_bar, C_GRAY, LV_PART_ITEMS | LV_STATE_DEFAULT);
+    /* Inactive tab items: white text, subtle background, right-side divider */
+    lv_obj_set_style_text_color(tab_bar, C_WHITE, LV_PART_ITEMS | LV_STATE_DEFAULT);
     lv_obj_set_style_text_font(tab_bar, &lv_font_montserrat_14, LV_PART_ITEMS | LV_STATE_DEFAULT);
-    lv_obj_set_style_bg_opa(tab_bar, LV_OPA_TRANSP, LV_PART_ITEMS | LV_STATE_DEFAULT);
-    lv_obj_set_style_border_width(tab_bar, 0, LV_PART_ITEMS | LV_STATE_DEFAULT);
+    lv_obj_set_style_bg_color(tab_bar, lv_color_hex(0x1E1E38), LV_PART_ITEMS | LV_STATE_DEFAULT);
+    lv_obj_set_style_bg_opa(tab_bar, LV_OPA_COVER, LV_PART_ITEMS | LV_STATE_DEFAULT);
+    lv_obj_set_style_border_color(tab_bar, C_DIV, LV_PART_ITEMS | LV_STATE_DEFAULT);
+    lv_obj_set_style_border_side(tab_bar, LV_BORDER_SIDE_RIGHT, LV_PART_ITEMS | LV_STATE_DEFAULT);
+    lv_obj_set_style_border_width(tab_bar, 1, LV_PART_ITEMS | LV_STATE_DEFAULT);
 
     /* Active tab item: white text, green bottom underline, slightly lighter bg */
     lv_obj_set_style_text_color(tab_bar, C_WHITE, LV_PART_ITEMS | LV_STATE_CHECKED);
@@ -523,12 +559,14 @@ static void build_right_panel(lv_obj_t *scr)
     /* Bar background */
     lv_obj_t *crb = make_panel(t_batt, col_l, 314, CELL_BAR_W, 18, C_DIV);
     lv_obj_set_style_radius(crb, 3, LV_PART_MAIN);
-    /* Store parent handle — ticks are children of the bar bg */
+    /* Green fill between lo and hi ticks — updated dynamically */
+    cell_range_fill = make_panel(crb, 0, 0, 0, 18, C_GREEN);
+    /* Orange boundary ticks — drawn on top (later z-order) */
     tick_cell_hi = make_panel(crb, 0, 0, 4, 18, C_ORANGE);
     tick_cell_lo = make_panel(crb, 0, 0, 4, 18, C_ORANGE);
 
     /* Cell balancing active */
-    dot_bal_active = make_dot(t_batt, col_l, 344, C_DGRAY);
+    dot_bal_active = make_dot(t_batt, col_l, 344, C_DGRAY, DOT_SZ_SM);
     lbl_bal_text   = make_lbl(t_batt, "CELL BALANCING: OFF",
                               C_GRAY, &lv_font_montserrat_14, col_l + DOT_SZ + 6, 348);
 
@@ -596,7 +634,7 @@ static void build_right_panel(lv_obj_t *scr)
      * ========================================================== */
     int g_col_l = 20, g_col_r = 460;
 
-    lbl_gps_speed = tab_val(t_gps, "GPS SPEED",  "--.- km/h", g_col_l,  12);
+    lbl_gps_speed = tab_val(t_gps, "GPS SPEED",  "--.- mph", g_col_l,  12);
     lbl_gps_head  = tab_val(t_gps, "HEADING",    "---\xc2\xb0 --",     g_col_r, 12);
 
     lbl_gps_alt   = tab_val(t_gps, "ALTITUDE",   "--- m MSL", g_col_l,  74);
@@ -752,7 +790,8 @@ void ui_update_can_data(const display_data_t *d)
 
     /* ---- Speed (Vega_VehicleStatus) ------------------------------------ */
     if (f & DFLAG_VEGA_STATUS) {
-        snprintf(buf, sizeof(buf), "%d", (int)d->vega_status.speed_kmh);
+        float mph = d->vega_status.speed_kmh * 0.621371f;
+        snprintf(buf, sizeof(buf), "%d", (int)mph);
         lv_label_set_text(lbl_speed, buf);
 
         /* GPS tab odometer */
@@ -861,6 +900,12 @@ void ui_update_can_data(const display_data_t *d)
         if (xlo > CELL_BAR_W - 4) xlo = CELL_BAR_W - 4;
         lv_obj_set_pos(tick_cell_hi, xhi, 0);
         lv_obj_set_pos(tick_cell_lo, xlo, 0);
+        /* Green fill between lo right-edge and hi left-edge */
+        int fill_x = xlo + 4;
+        int fill_w = xhi - xlo - 4;
+        if (fill_w < 0) fill_w = 0;
+        lv_obj_set_pos(cell_range_fill, fill_x, 0);
+        lv_obj_set_width(cell_range_fill, fill_w);
     }
 
     /* ---- Temperature extremes (R_BMS_TempExtremes) --------------------- */
@@ -951,8 +996,8 @@ void ui_update_can_data(const display_data_t *d)
 
     /* ---- GPS navigation (Altair_GPS_Nav) ------------------------------- */
     if (f & DFLAG_GPS_NAV) {
-        int spd10 = (int)(d->gps_nav.speed_kmh * 10.0f);
-        snprintf(buf, sizeof(buf), "%d.%d km/h", spd10 / 10, spd10 % 10);
+        int spd10 = (int)(d->gps_nav.speed_kmh * 0.621371f * 10.0f);
+        snprintf(buf, sizeof(buf), "%d.%d mph", spd10 / 10, spd10 % 10);
         lv_label_set_text(lbl_gps_speed, buf);
 
         int hdg = (int)d->gps_nav.heading_deg;
@@ -1032,14 +1077,14 @@ void ui_update_can_data(const display_data_t *d)
         dot_set(dot_batt_sys, s->cockpit_batt_on                 ? C_GREEN  : C_DGRAY);
         dot_set(dot_mc_sys,   (s->relay_mc || s->relay_mc_precharge) ? C_GREEN : C_DGRAY);
 
-        /* Row 2 relay dots */
-        dot_set(dot_hv_pos,    s->relay_hv_pos        ? C_GREEN : C_DGRAY);
-        dot_set(dot_hv_neg,    s->relay_hv_neg        ? C_GREEN : C_DGRAY);
-        dot_set(dot_mc_relay,  s->relay_mc            ? C_GREEN : C_DGRAY);
-        dot_set(dot_wc_relay,  s->relay_wc            ? C_GREEN : C_DGRAY);
-        dot_set(dot_dcdc_relay,s->relay_dcdc          ? C_GREEN : C_DGRAY);
+        /* Contactor relay dots */
+        dot_set(dot_hv_pos,    s->relay_hv_pos  ? C_GREEN : C_DGRAY);
+        dot_set(dot_hv_neg,    s->relay_hv_neg  ? C_GREEN : C_DGRAY);
+        dot_set(dot_mc_relay,  s->relay_mc       ? C_GREEN : C_DGRAY);
+        dot_set(dot_wc_relay,  s->relay_wc       ? C_GREEN : C_DGRAY);
+        dot_set(dot_dcdc_relay,s->relay_dcdc     ? C_GREEN : C_DGRAY);
 
-        /* Precharge / HV_Ready toggles */
+        /* Precharge / HV Ready */
         dot_set(dot_prech,  s->precharge_active ? C_AMBER : C_DGRAY);
         dot_set(dot_hv_rdy, s->hv_ready         ? C_GREEN : C_DGRAY);
 

@@ -1,7 +1,7 @@
 {
     "version":            "1.2",
     "project_name":       "ReceiveTest",
-    "project_version":    "159abd8-dirty",
+    "project_version":    "10e2c2a-dirty",
     "project_path":       "C:/D-Drive/School/MSU/Solar Car/code/ESP32Stuff/ReceiveTest",
     "idf_path":           "C:/Users/Asus M16/esp/v5.5.2/esp-idf",
     "build_dir":          "C:/D-Drive/School/MSU/Solar Car/code/ESP32Stuff/ReceiveTest/build",
@@ -715,7 +715,7 @@
             "managed_reqs": [],
             "managed_priv_reqs": [],
             "file": "C:/D-Drive/School/MSU/Solar Car/code/ESP32Stuff/ReceiveTest/build/esp-idf/esp_eth/libesp_eth.a",
-            "sources": [ "C:/Users/Asus M16/esp/v5.5.2/esp-idf/components/esp_eth/src/esp_eth.c", "C:/Users/Asus M16/esp/v5.5.2/esp-idf/components/esp_eth/src/phy/esp_eth_phy_802_3.c", "C:/Users/Asus M16/esp/v5.5.2/esp-idf/components/esp_eth/src/esp_eth_netif_glue.c", "C:/Users/Asus M16/esp/v5.5.2/esp-idf/components/esp_eth/src/mac/esp_eth_mac_esp.c", "C:/Users/Asus M16/esp/v5.5.2/esp-idf/components/esp_eth/src/mac/esp_eth_mac_esp_dma.c", "C:/Users/Asus M16/esp/v5.5.2/esp-idf/components/esp_eth/src/mac/esp_eth_mac_esp_gpio.c", "C:/Users/Asus M16/esp/v5.5.2/esp-idf/components/esp_eth/src/phy/esp_eth_phy_generic.c", "C:/Users/Asus M16/esp/v5.5.2/esp-idf/components/esp_eth/src/phy/esp_eth_phy_dp83848.c", "C:/Users/Asus M16/esp/v5.5.2/esp-idf/components/esp_eth/src/phy/esp_eth_phy_ip101.c", "C:/Users/Asus M16/esp/v5.5.2/esp-idf/components/esp_eth/src/phy/esp_eth_phy_ksz80xx.c", "C:/Users/Asus M16/esp/v5.5.2/esp-idf/components/esp_eth/src/phy/esp_eth_phy_lan87xx.c", "C:/Users/Asus M16/esp/v5.5.2/esp-idf/components/esp_eth/src/phy/esp_eth_phy_rtl8201.c" ],
+            "sources": [ "C:/Users/Asus M16/esp/v5.5.2/esp-idf/components/esp_eth/src/esp_eth.c", "C:/Users/Asus M16/esp/v5.5.2/esp-idf/components/esp_eth/src/phy/esp_eth_phy_802_3.c", "C:/Users/Asus M16/esp/v5.5.2/esp-idf/components/esp_eth/src/esp_eth_netif_glue.c", "C:/Users/Asus M16/esp/v5.5.2/esp-idf/components/esp_eth/src/mac/esp_eth_mac_esp.c", "C:/Users/Asus M16/esp/v5.5.2/esp-idf/components/esp_eth/src/mac/esp_eth_mac_esp_dma.c", "C:/Users/Asus M16/esp/v5.5.2/esp-idf/components/esp_eth/src/mac/esp_eth_mac_esp_gpio.c", "C:/Users/Asus M16/esp/v5.5.2/esp-idf/components/esp_eth/src/phy/esp_eth_phy_generic.c", "C:/Users/Asus M16/esp/v5.5.2/esp-idf/components/esp_eth/src/phy/esp_eth_phy_dp83848.c", "C:/Users/Asus M16/esp/v5.5.2/esp-idf/components/esp_eth/src/phy/esp_eth_phy_ip101.c", "C:/Users/Asus M16/esp/v5.5.2/esp-idf/components/esp_eth/src/phy/esp_eth_phy_ksz80xx.c", "C:/Users/Asus M16/esp/v5.5.2/esp-idf/components/esp_eth/src/phy/esp_eth_phy_lan87xx.c", "C:/Users/Asus M16/esp/v5.5.2/esp-idf/components/esp_eth/src/phy/esp_eth_phy_rtl8201.c", "C:/Users/Asus M16/esp/v5.5.2/esp-idf/components/esp_eth/src/spi/w5500/esp_eth_mac_w5500.c", "C:/Users/Asus M16/esp/v5.5.2/esp-idf/components/esp_eth/src/spi/w5500/esp_eth_phy_w5500.c" ],
             "include_dirs": [ "include" ]
         },
         "esp_event": {
@@ -1415,7 +1415,7 @@
             "dir": "C:/D-Drive/School/MSU/Solar Car/code/ESP32Stuff/ReceiveTest/components/network",
             "type": "LIBRARY",
             "lib": "__idf_network",
-            "reqs": [ "esp_netif", "esp_eth", "esp_event", "lwip" ],
+            "reqs": [ "esp_netif", "esp_eth", "esp_event", "lwip", "driver" ],
             "priv_reqs": [],
             "managed_reqs": [],
             "managed_priv_reqs": [],
@@ -1660,7 +1660,7 @@
             "managed_reqs": [],
             "managed_priv_reqs": [],
             "file": "C:/D-Drive/School/MSU/Solar Car/code/ESP32Stuff/ReceiveTest/build/esp-idf/ui/libui.a",
-            "sources": [ "C:/D-Drive/School/MSU/Solar Car/code/ESP32Stuff/ReceiveTest/components/ui/ui.c" ],
+            "sources": [ "C:/D-Drive/School/MSU/Solar Car/code/ESP32Stuff/ReceiveTest/components/ui/ui.c", "C:/D-Drive/School/MSU/Solar Car/code/ESP32Stuff/ReceiveTest/components/ui/lv_font_montserrat_72.c" ],
             "include_dirs": [ "include" ]
         },
         "ulp": {
@@ -3147,7 +3147,7 @@
             "prefix": "idf",
             "dir": "C:/D-Drive/School/MSU/Solar Car/code/ESP32Stuff/ReceiveTest/components/network",
             "lib": "__idf_network",
-            "reqs": [ "esp_netif", "esp_eth", "esp_event", "lwip" ],
+            "reqs": [ "esp_netif", "esp_eth", "esp_event", "lwip", "driver" ],
             "priv_reqs": [],
             "managed_reqs": [],
             "managed_priv_reqs": [],
