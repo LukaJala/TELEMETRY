@@ -1,0 +1,12 @@
+# ESP-IDF build output
+build/
+
+# Managed components (downloaded by the component manager)
+managed_components/
+
+# sdkconfig is regenerated; keep sdkconfig.defaults instead
+sdkconfig.old
+
+# Editor / IDE
+.vscode/settings.json
+*.swp
