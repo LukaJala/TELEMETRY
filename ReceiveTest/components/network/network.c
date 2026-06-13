@@ -28,44 +28,44 @@ static const char *TAG = "NETWORK";
 /* ============================================================
  * CONFIGURATION - Change these if needed
  * ============================================================ */
-#define STATIC_IP       "192.168.1.100"   /* ESP32 IP on IP101 interface */
-#define STATIC_GATEWAY  "192.168.1.1"     /* Laptop IP on IP101 side */
-#define STATIC_NETMASK  "255.255.255.0"
-#define TCP_PORT        5000
+#define STATIC_IP "192.168.1.100"    /* ESP32 IP on IP101 interface */
+#define STATIC_GATEWAY "192.168.1.1" /* Laptop IP on IP101 side */
+#define STATIC_NETMASK "255.255.255.0"
+#define TCP_PORT 5000
 
 /* W5500 SPI Ethernet (second interface) */
-#define W5500_STATIC_IP     "192.168.2.100"
-#define W5500_GATEWAY       "192.168.2.1"   /* Laptop IP on W5500 side */
+#define W5500_STATIC_IP "192.168.2.100"
+#define W5500_GATEWAY "192.168.2.1" /* Laptop IP on W5500 side */
 
-#define W5500_MOSI_GPIO     23
-#define W5500_MISO_GPIO     22
-#define W5500_SCLK_GPIO     21
-#define W5500_CS_GPIO       24
-#define W5500_INT_GPIO      25
-#define W5500_RST_GPIO      33
-#define W5500_SPI_HOST      SPI2_HOST
-#define W5500_SPI_MHZ       8
+#define W5500_MOSI_GPIO 23
+#define W5500_MISO_GPIO 22
+#define W5500_SCLK_GPIO 21
+#define W5500_CS_GPIO 24
+#define W5500_INT_GPIO 25
+#define W5500_RST_GPIO 33
+#define W5500_SPI_HOST SPI2_HOST
+#define W5500_SPI_MHZ 8
 
 /* CAN frame over TCP is exactly 14 bytes: [0x01 magic][CAN_ID 4B][DLC 1B][data 8B]
  * The 0x01 prefix distinguishes binary frames from text commands, which are always
  * printable ASCII (>= 0x20) and therefore can never start with 0x01. */
 #define CAN_FRAME_MAGIC 0x01
-#define CAN_FRAME_SIZE  14
+#define CAN_FRAME_SIZE 14
 
 /* recv() read buffer — limits bytes consumed per recv() call */
-#define RECV_BUF_SIZE   (CAN_FRAME_SIZE * 8)    /* 112 bytes */
+#define RECV_BUF_SIZE (CAN_FRAME_SIZE * 8) /* 112 bytes */
 
 /* Accumulator must be larger than RECV_BUF_SIZE so that leftover partial-frame
  * bytes plus a full recv() never exceed the buffer (overflow + reset = desync) */
-#define ACCUM_SIZE      (CAN_FRAME_SIZE * 32)   /* 448 bytes */
+#define ACCUM_SIZE (CAN_FRAME_SIZE * 32) /* 448 bytes */
 
 /* ============================================================
  * GLOBAL STATE
  * ============================================================ */
 static char ip_address_str[16] = "0.0.0.0";
-static network_data_callback_t       data_callback       = NULL;
-static network_connect_callback_t    connect_callback     = NULL;
-static network_disconnect_callback_t disconnect_callback  = NULL;
+static network_data_callback_t data_callback = NULL;
+static network_connect_callback_t connect_callback = NULL;
+static network_disconnect_callback_t disconnect_callback = NULL;
 static esp_netif_t *eth_netif = NULL;
 
 /* ============================================================
@@ -73,23 +73,24 @@ static esp_netif_t *eth_netif = NULL;
  * Called when Ethernet connects/disconnects
  * ============================================================ */
 static void eth_event_handler(void *arg, esp_event_base_t event_base,
-                               int32_t event_id, void *event_data)
+                              int32_t event_id, void *event_data)
 {
-    switch (event_id) {
-        case ETHERNET_EVENT_CONNECTED:
-            ESP_LOGI(TAG, "Ethernet cable connected");
-            break;
-        case ETHERNET_EVENT_DISCONNECTED:
-            ESP_LOGW(TAG, "Ethernet cable disconnected");
-            break;
-        case ETHERNET_EVENT_START:
-            ESP_LOGI(TAG, "Ethernet started");
-            break;
-        case ETHERNET_EVENT_STOP:
-            ESP_LOGI(TAG, "Ethernet stopped");
-            break;
-        default:
-            break;
+    switch (event_id)
+    {
+    case ETHERNET_EVENT_CONNECTED:
+        ESP_LOGI(TAG, "Ethernet cable connected");
+        break;
+    case ETHERNET_EVENT_DISCONNECTED:
+        ESP_LOGW(TAG, "Ethernet cable disconnected");
+        break;
+    case ETHERNET_EVENT_START:
+        ESP_LOGI(TAG, "Ethernet started");
+        break;
+    case ETHERNET_EVENT_STOP:
+        ESP_LOGI(TAG, "Ethernet stopped");
+        break;
+    default:
+        break;
     }
 }
 
@@ -98,9 +99,10 @@ static void eth_event_handler(void *arg, esp_event_base_t event_base,
  * Called when we get an IP address
  * ============================================================ */
 static void ip_event_handler(void *arg, esp_event_base_t event_base,
-                              int32_t event_id, void *event_data)
+                             int32_t event_id, void *event_data)
 {
-    if (event_id == IP_EVENT_ETH_GOT_IP) {
+    if (event_id == IP_EVENT_ETH_GOT_IP)
+    {
         ip_event_got_ip_t *event = (ip_event_got_ip_t *)event_data;
 
         /* Convert IP to string and save it */
@@ -127,7 +129,7 @@ static void ip_event_handler(void *arg, esp_event_base_t event_base,
 static void tcp_server_task(void *pvParameters)
 {
     uint8_t accum[ACCUM_SIZE];
-    int     accum_len = 0;
+    int accum_len = 0;
     uint8_t raw[RECV_BUF_SIZE];
 
     int listen_sock, client_sock;
@@ -137,7 +139,8 @@ static void tcp_server_task(void *pvParameters)
     ESP_LOGI(TAG, "Starting TCP server on port %d", TCP_PORT);
 
     listen_sock = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
-    if (listen_sock < 0) {
+    if (listen_sock < 0)
+    {
         ESP_LOGE(TAG, "Failed to create socket");
         vTaskDelete(NULL);
         return;
@@ -150,14 +153,16 @@ static void tcp_server_task(void *pvParameters)
     server_addr.sin_addr.s_addr = INADDR_ANY;
     server_addr.sin_port = htons(TCP_PORT);
 
-    if (bind(listen_sock, (struct sockaddr *)&server_addr, sizeof(server_addr)) < 0) {
+    if (bind(listen_sock, (struct sockaddr *)&server_addr, sizeof(server_addr)) < 0)
+    {
         ESP_LOGE(TAG, "Failed to bind socket");
         close(listen_sock);
         vTaskDelete(NULL);
         return;
     }
 
-    if (listen(listen_sock, 1) < 0) {
+    if (listen(listen_sock, 1) < 0)
+    {
         ESP_LOGE(TAG, "Failed to listen");
         close(listen_sock);
         vTaskDelete(NULL);
@@ -166,11 +171,13 @@ static void tcp_server_task(void *pvParameters)
 
     ESP_LOGI(TAG, "TCP server listening on %s:%d", ip_address_str, TCP_PORT);
 
-    while (1) {
+    while (1)
+    {
         ESP_LOGI(TAG, "Waiting for client connection...");
 
         client_sock = accept(listen_sock, (struct sockaddr *)&client_addr, &addr_len);
-        if (client_sock < 0) {
+        if (client_sock < 0)
+        {
             ESP_LOGE(TAG, "Failed to accept connection");
             continue;
         }
@@ -178,24 +185,30 @@ static void tcp_server_task(void *pvParameters)
         ESP_LOGI(TAG, "Client connected from %s", inet_ntoa(client_addr.sin_addr));
         accum_len = 0;
 
-        if (connect_callback != NULL) {
+        if (connect_callback != NULL)
+        {
             connect_callback();
         }
 
-        while (1) {
+        while (1)
+        {
             int space = (int)sizeof(raw);
             int len = recv(client_sock, raw, space, 0);
 
-            if (len < 0) {
+            if (len < 0)
+            {
                 ESP_LOGE(TAG, "Receive error");
                 break;
-            } else if (len == 0) {
+            }
+            else if (len == 0)
+            {
                 ESP_LOGI(TAG, "Client disconnected");
                 break;
             }
 
             /* Append new bytes to accumulator, guard against overflow */
-            if (accum_len + len > (int)sizeof(accum)) {
+            if (accum_len + len > (int)sizeof(accum))
+            {
                 ESP_LOGW(TAG, "Accumulator overflow — resetting");
                 accum_len = 0;
             }
@@ -203,36 +216,45 @@ static void tcp_server_task(void *pvParameters)
             accum_len += len;
 
             /* Dispatch all complete units from the front of the accumulator */
-            while (accum_len > 0 && data_callback != NULL) {
+            while (accum_len > 0 && data_callback != NULL)
+            {
 
-                if (accum[0] == CAN_FRAME_MAGIC) {
+                if (accum[0] == CAN_FRAME_MAGIC)
+                {
                     /* Binary CAN frame: [0x01][CAN_ID 4B][DLC 1B][data 8B] */
-                    if (accum_len < CAN_FRAME_SIZE) {
+                    if (accum_len < CAN_FRAME_SIZE)
+                    {
                         break; /* wait for more bytes */
                     }
                     data_callback(accum, CAN_FRAME_SIZE);
                     accum_len -= CAN_FRAME_SIZE;
                     memmove(accum, accum + CAN_FRAME_SIZE, accum_len);
-
-                } else if (accum[0] >= 0x20) {
+                }
+                else if (accum[0] >= 0x20)
+                {
                     /* Text command: null-terminated printable ASCII string */
                     int cmd_len = 0;
-                    while (cmd_len < accum_len && accum[cmd_len] != '\0') {
+                    while (cmd_len < accum_len && accum[cmd_len] != '\0')
+                    {
                         cmd_len++;
                     }
-                    if (cmd_len < accum_len && accum[cmd_len] == '\0') {
+                    if (cmd_len < accum_len && accum[cmd_len] == '\0')
+                    {
                         /* Complete — dispatch */
                         ESP_LOGI(TAG, "Text command: %s", (char *)accum);
                         data_callback(accum, cmd_len);
                         int consumed = cmd_len + 1;
                         accum_len -= consumed;
                         memmove(accum, accum + consumed, accum_len);
-                    } else {
+                    }
+                    else
+                    {
                         /* Incomplete — wait for more bytes */
                         break;
                     }
-
-                } else {
+                }
+                else
+                {
                     /* Unknown byte — drop it and resync */
                     ESP_LOGW(TAG, "Unknown framing byte 0x%02X — dropping", accum[0]);
                     accum_len--;
@@ -243,7 +265,8 @@ static void tcp_server_task(void *pvParameters)
 
         close(client_sock);
 
-        if (disconnect_callback != NULL) {
+        if (disconnect_callback != NULL)
+        {
             disconnect_callback();
         }
     }
@@ -263,21 +286,21 @@ static esp_err_t init_w5500(void)
     gpio_install_isr_service(0);
 
     spi_bus_config_t buscfg = {
-        .mosi_io_num   = W5500_MOSI_GPIO,
-        .miso_io_num   = W5500_MISO_GPIO,
-        .sclk_io_num   = W5500_SCLK_GPIO,
+        .mosi_io_num = W5500_MOSI_GPIO,
+        .miso_io_num = W5500_MISO_GPIO,
+        .sclk_io_num = W5500_SCLK_GPIO,
         .quadwp_io_num = -1,
         .quadhd_io_num = -1,
     };
     ESP_ERROR_CHECK(spi_bus_initialize(W5500_SPI_HOST, &buscfg, SPI_DMA_CH_AUTO));
 
     spi_device_interface_config_t devcfg = {
-        .command_bits   = 16,
-        .address_bits   = 8,
-        .mode           = 0,
+        .command_bits = 16,
+        .address_bits = 8,
+        .mode = 0,
         .clock_speed_hz = W5500_SPI_MHZ * 1000 * 1000,
-        .spics_io_num   = W5500_CS_GPIO,
-        .queue_size     = 20,
+        .spics_io_num = W5500_CS_GPIO,
+        .queue_size = 20,
     };
 
     eth_w5500_config_t w5500_cfg = ETH_W5500_DEFAULT_CONFIG(W5500_SPI_HOST, &devcfg);
@@ -285,7 +308,7 @@ static esp_err_t init_w5500(void)
 
     eth_mac_config_t mac_cfg = ETH_MAC_DEFAULT_CONFIG();
     eth_phy_config_t phy_cfg = ETH_PHY_DEFAULT_CONFIG();
-    phy_cfg.reset_gpio_num  = W5500_RST_GPIO;
+    phy_cfg.reset_gpio_num = W5500_RST_GPIO;
 
     esp_eth_mac_t *mac = esp_eth_mac_new_w5500(&w5500_cfg, &mac_cfg);
     esp_eth_phy_t *phy = esp_eth_phy_new_w5500(&phy_cfg);
@@ -293,7 +316,8 @@ static esp_err_t init_w5500(void)
     esp_eth_config_t eth_cfg = ETH_DEFAULT_CONFIG(mac, phy);
     esp_eth_handle_t eth_handle = NULL;
     esp_err_t err = esp_eth_driver_install(&eth_cfg, &eth_handle);
-    if (err != ESP_OK) {
+    if (err != ESP_OK)
+    {
         ESP_LOGE(TAG, "W5500 init failed (0x%x) — check wiring. IP101 still active.", err);
         esp_log_level_set("w5500.mac", ESP_LOG_NONE);
         return err;
@@ -301,12 +325,12 @@ static esp_err_t init_w5500(void)
 
     /* Create a separate netif with a unique key so it doesn't conflict with IP101 */
     esp_netif_inherent_config_t w5500_base = ESP_NETIF_INHERENT_DEFAULT_ETH();
-    w5500_base.if_key    = "ETH_SPI_0";
-    w5500_base.if_desc   = "eth_spi";
-    w5500_base.route_prio = 30;  /* lower than IP101 (50) */
+    w5500_base.if_key = "ETH_SPI_0";
+    w5500_base.if_desc = "eth_spi";
+    w5500_base.route_prio = 30; /* lower than IP101 (50) */
 
     esp_netif_config_t w5500_netif_cfg = {
-        .base  = &w5500_base,
+        .base = &w5500_base,
         .stack = ESP_NETIF_NETSTACK_DEFAULT_ETH,
     };
     esp_netif_t *w5500_netif = esp_netif_new(&w5500_netif_cfg);
@@ -314,8 +338,8 @@ static esp_err_t init_w5500(void)
     ESP_ERROR_CHECK(esp_netif_dhcpc_stop(w5500_netif));
 
     esp_netif_ip_info_t ip_info = {};
-    ip_info.ip.addr      = esp_ip4addr_aton(W5500_STATIC_IP);
-    ip_info.gw.addr      = esp_ip4addr_aton(W5500_GATEWAY);
+    ip_info.ip.addr = esp_ip4addr_aton(W5500_STATIC_IP);
+    ip_info.gw.addr = esp_ip4addr_aton(W5500_GATEWAY);
     ip_info.netmask.addr = esp_ip4addr_aton(STATIC_NETMASK);
     ESP_ERROR_CHECK(esp_netif_set_ip_info(w5500_netif, &ip_info));
 
@@ -337,8 +361,8 @@ esp_err_t network_init(network_data_callback_t data_cb,
     ESP_LOGI(TAG, "Initializing Ethernet with static IP: %s", STATIC_IP);
 
     /* Save the callback functions */
-    data_callback       = data_cb;
-    connect_callback    = connect_cb;
+    data_callback = data_cb;
+    connect_callback = connect_cb;
     disconnect_callback = disconnect_cb;
 
     /* Initialize TCP/IP stack */
@@ -394,9 +418,9 @@ esp_err_t network_init(network_data_callback_t data_cb,
      * Register event handlers
      * -------------------------------------------------------- */
     ESP_ERROR_CHECK(esp_event_handler_register(ETH_EVENT, ESP_EVENT_ANY_ID,
-                                                &eth_event_handler, NULL));
+                                               &eth_event_handler, NULL));
     ESP_ERROR_CHECK(esp_event_handler_register(IP_EVENT, IP_EVENT_ETH_GOT_IP,
-                                                &ip_event_handler, NULL));
+                                               &ip_event_handler, NULL));
 
     /* Start Ethernet */
     ESP_ERROR_CHECK(esp_eth_start(eth_handle));
@@ -404,7 +428,8 @@ esp_err_t network_init(network_data_callback_t data_cb,
     /* --------------------------------------------------------
      * Initialize W5500 SPI Ethernet (second interface)
      * -------------------------------------------------------- */
-    if (init_w5500() != ESP_OK) {
+    if (init_w5500() != ESP_OK)
+    {
         ESP_LOGW(TAG, "W5500 unavailable — running on IP101 only");
     }
 
@@ -420,7 +445,7 @@ esp_err_t network_init(network_data_callback_t data_cb,
 /* ============================================================
  * GET IP ADDRESS STRING
  * ============================================================ */
-const char* network_get_ip(void)
+const char *network_get_ip(void)
 {
     return ip_address_str;
 }

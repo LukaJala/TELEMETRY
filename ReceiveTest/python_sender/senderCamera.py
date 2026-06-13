@@ -17,7 +17,7 @@ ESP32_IP = "192.168.1.100"
 ESP32_PORT = 5000
 
 CMD_CAM_START = "__CAM_START__"
-CMD_CAM_STOP  = "__CAM_STOP__"
+CMD_CAM_STOP = "__CAM_STOP__"
 
 
 class CameraSenderApp:
@@ -38,7 +38,9 @@ class CameraSenderApp:
         conn_frame.pack(fill="x", padx=10, pady=5)
 
         ttk.Label(conn_frame, text=f"ESP32: {ESP32_IP}:{ESP32_PORT}").pack(side="left")
-        self.connect_btn = ttk.Button(conn_frame, text="Connect", command=self.toggle_connection)
+        self.connect_btn = ttk.Button(
+            conn_frame, text="Connect", command=self.toggle_connection
+        )
         self.connect_btn.pack(side="right")
         self.status_label = ttk.Label(conn_frame, text="Disconnected", foreground="red")
         self.status_label.pack(side="right", padx=10)
@@ -47,7 +49,9 @@ class CameraSenderApp:
         cam_frame = ttk.LabelFrame(self.root, text="Camera", padding=10)
         cam_frame.pack(fill="x", padx=10, pady=5)
 
-        self.cam_btn = ttk.Button(cam_frame, text="Start Camera", command=self.toggle_camera)
+        self.cam_btn = ttk.Button(
+            cam_frame, text="Start Camera", command=self.toggle_camera
+        )
         self.cam_btn.pack(side="left", padx=5)
         self.cam_status = ttk.Label(cam_frame, text="Off", foreground="gray")
         self.cam_status.pack(side="left", padx=10)
@@ -106,7 +110,7 @@ class CameraSenderApp:
             self.log("Not connected!")
             return False
         try:
-            self.socket.send(data.encode('utf-8'))
+            self.socket.send(data.encode("utf-8"))
             self.log(f"Sent: {data}")
             return True
         except Exception as e:

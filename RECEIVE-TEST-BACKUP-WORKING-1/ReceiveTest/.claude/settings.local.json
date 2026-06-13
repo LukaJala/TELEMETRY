@@ -1,0 +1,28 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(curl -s \"https://raw.githubusercontent.com/raspberrypi/linux/rpi-6.6.y/drivers/media/i2c/imx500.c\" -o /tmp/imx500.c)",
+      "Read(//tmp/**)",
+      "Bash(curl -s \"https://raw.githubusercontent.com/raspberrypi/linux/rpi-6.6.y/arch/arm/boot/dts/overlays/imx500.dtsi\")",
+      "WebSearch",
+      "WebFetch(domain:www.waveshare.com)",
+      "WebFetch(domain:docs.espressif.com)",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:files.waveshare.com)",
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "WebFetch(domain:forum.arduino.cc)",
+      "WebFetch(domain:community.dfrobot.com)",
+      "WebFetch(domain:m.media-amazon.com)",
+      "WebFetch(domain:www.arducam.com)",
+      "WebFetch(domain:spotpear.com)",
+      "WebFetch(domain:www.espressif.com)",
+      "WebFetch(domain:documentation.espressif.com)",
+      "WebFetch(domain:www.cnx-software.com)",
+      "Bash(where idf.py)",
+      "Bash(cmd.exe:*)",
+      "Bash(python \"C:\\\\Users\\\\Asus M16\\\\esp\\\\v5.5.2\\\\esp-idf\\\\tools\\\\idf.py\" build)",
+      "Bash(\"C:\\\\Users\\\\Asus M16\\\\esp\\\\v5.5.2\\\\esp-idf\\\\export.bat\")",
+      "Bash(\"c:\\\\D-Drive\\\\School\\\\MSU\\\\Espressif\\\\python_env\\\\idf5.5_py3.11_env\\\\Scripts\\\\python.exe\" \"C:\\\\Users\\\\Asus M16\\\\esp\\\\v5.5.2\\\\esp-idf\\\\tools\\\\idf.py\" build)"
+    ]
+  }
+}

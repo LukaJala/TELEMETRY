@@ -1,0 +1,12 @@
+idf_component_register(
+    SRCS
+        "display_init.c"
+    INCLUDE_DIRS
+        "include"
+    REQUIRES
+        esp_lcd
+        driver
+        esp_lvgl_port
+        esp_lcd_jd9365_10_1
+        esp_hw_support
+)

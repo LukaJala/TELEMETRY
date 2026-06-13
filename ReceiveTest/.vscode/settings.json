@@ -13,5 +13,8 @@
 ],
 "idf.flashType": "UART",
 "idf.portWin": "COM7",
-"idf.currentSetup": "C:\\Users\\Asus M16\\esp\\v5.5.2\\esp-idf"
+"idf.currentSetup": "C:\\Users\\Asus M16\\esp\\v5.5.2\\esp-idf",
+"cmake.configureOnOpen": false,
+"cmake.configureOnEdit": false,
+"cmake.automaticReconfigure": false
 }

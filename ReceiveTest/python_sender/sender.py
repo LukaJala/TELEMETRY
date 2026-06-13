@@ -25,7 +25,8 @@ ESP32_PORT = 5000
 
 # Commands that the ESP32 recognizes for camera control
 CMD_CAM_START = "__CAM_START__"
-CMD_CAM_STOP  = "__CAM_STOP__"
+CMD_CAM_STOP = "__CAM_STOP__"
+
 
 # ============================================================
 # MAIN APPLICATION CLASS
@@ -52,7 +53,9 @@ class SenderApp:
 
         ttk.Label(conn_frame, text=f"ESP32: {ESP32_IP}:{ESP32_PORT}").pack(side="left")
 
-        self.connect_btn = ttk.Button(conn_frame, text="Connect", command=self.toggle_connection)
+        self.connect_btn = ttk.Button(
+            conn_frame, text="Connect", command=self.toggle_connection
+        )
         self.connect_btn.pack(side="right")
 
         self.status_label = ttk.Label(conn_frame, text="Disconnected", foreground="red")
@@ -68,7 +71,9 @@ class SenderApp:
         self.text_entry.pack(side="left", padx=5)
         self.text_entry.bind("<Return>", lambda e: self.send_text())  # Enter key sends
 
-        ttk.Button(text_frame, text="Send", command=self.send_text).pack(side="left", padx=5)
+        ttk.Button(text_frame, text="Send", command=self.send_text).pack(
+            side="left", padx=5
+        )
 
         # --------------------------------------------------------
         # Send Time Frame
@@ -76,7 +81,9 @@ class SenderApp:
         time_frame = ttk.LabelFrame(self.root, text="Send Time", padding=10)
         time_frame.pack(fill="x", padx=10, pady=5)
 
-        self.time_btn = ttk.Button(time_frame, text="Start Sending Time", command=self.toggle_time)
+        self.time_btn = ttk.Button(
+            time_frame, text="Start Sending Time", command=self.toggle_time
+        )
         self.time_btn.pack(side="left", padx=5)
 
         self.time_label = ttk.Label(time_frame, text="--:--:--")
@@ -88,7 +95,9 @@ class SenderApp:
         cam_frame = ttk.LabelFrame(self.root, text="Camera", padding=10)
         cam_frame.pack(fill="x", padx=10, pady=5)
 
-        self.cam_btn = ttk.Button(cam_frame, text="Start Camera", command=self.toggle_camera)
+        self.cam_btn = ttk.Button(
+            cam_frame, text="Start Camera", command=self.toggle_camera
+        )
         self.cam_btn.pack(side="left", padx=5)
 
         self.cam_status = ttk.Label(cam_frame, text="Off", foreground="gray")
@@ -100,10 +109,22 @@ class SenderApp:
         quick_frame = ttk.LabelFrame(self.root, text="Quick Send", padding=10)
         quick_frame.pack(fill="x", padx=10, pady=5)
 
-        ttk.Button(quick_frame, text="Solar", command=lambda: self.send("This is MSU Solar Car!")).pack(side="left", padx=2)
-        ttk.Button(quick_frame, text="67", command=lambda: self.send("67")).pack(side="left", padx=2)
-        ttk.Button(quick_frame, text="Who's GOATed?", command=lambda: self.send("The Telly team")).pack(side="left", padx=2)
-        ttk.Button(quick_frame, text="Clear", command=lambda: self.send("---")).pack(side="left", padx=2)
+        ttk.Button(
+            quick_frame,
+            text="Solar",
+            command=lambda: self.send("This is MSU Solar Car!"),
+        ).pack(side="left", padx=2)
+        ttk.Button(quick_frame, text="67", command=lambda: self.send("67")).pack(
+            side="left", padx=2
+        )
+        ttk.Button(
+            quick_frame,
+            text="Who's GOATed?",
+            command=lambda: self.send("The Telly team"),
+        ).pack(side="left", padx=2)
+        ttk.Button(quick_frame, text="Clear", command=lambda: self.send("---")).pack(
+            side="left", padx=2
+        )
 
         # --------------------------------------------------------
         # Log Frame
@@ -171,7 +192,7 @@ class SenderApp:
             return False
 
         try:
-            self.socket.send(data.encode('utf-8') + b'\x00')
+            self.socket.send(data.encode("utf-8") + b"\x00")
             self.log(f"Sent: {data}")
             return True
         except Exception as e:
@@ -239,6 +260,7 @@ class SenderApp:
         else:
             self.cam_btn.config(text="Start Camera")
             self.cam_status.config(text="Off", foreground="gray")
+
 
 # ============================================================
 # MAIN

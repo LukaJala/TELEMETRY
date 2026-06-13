@@ -24,4 +24,4 @@ esp_err_t network_init(network_data_callback_t data_cb,
                        network_disconnect_callback_t disconnect_cb);
 
 /* Get our IP address as a string (for display) */
-const char* network_get_ip(void);
+const char *network_get_ip(void);

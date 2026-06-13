@@ -1,0 +1,226 @@
+================================================================================
+  ReceiveTest — System Overview
+  Solar Car Telemetry Display + Reverse Camera
+================================================================================
+
+HARDWARE
+--------
+  Board:    Waveshare ESP32-P4-Module-DEV-KIT
+  MCU:      ESP32-P4
+  Display:  JD9365 10.1" LCD (800x1280 native, used in landscape 1280x800)
+            Connected via MIPI DSI, 2 lanes
+  Camera:   OV5647 (Raspberry Pi Camera Module B rev 2.0)
+            Connected via MIPI CSI, 2 lanes, I2C address 0x36
+  Network:  Onboard Ethernet (IP101 PHY), static IP 192.168.1.100, port 5000
+
+PURPOSE
+-------
+  The board receives telemetry data over Ethernet TCP and displays it on
+  screen using LVGL. When the solar car goes into reverse, a camera feed
+  replaces the display. When reverse ends, the display returns to showing
+  the latest telemetry data. Data is always received in the background
+  regardless of whether the camera is active.
+
+  TCP commands:
+    __CAM_START__   Start the camera feed (entering reverse)
+    __CAM_STOP__    Stop the camera feed (leaving reverse)
+    <anything else> Telemetry data — displayed on screen (or buffered if
+                    camera is active, shown when camera stops)
+
+================================================================================
+  BOOT SEQUENCE (main/main.c — app_main)
+================================================================================
+
+  1. display_init()          — Powers on backlight, configures MIPI DSI bus,
+                               initializes JD9365 panel. Returns panel handle.
+
+  2. lvgl_port_init()        — Starts LVGL background rendering task and timers.
+
+  3. lvgl_port_add_disp_dsi()— Registers the DSI panel with LVGL. Allocates a
+                               3MB RGB888 draw buffer in PSRAM. Software rotation
+                               is enabled (90 degrees) for landscape orientation.
+
+  4. ui_init(disp)           — Creates the LVGL screen: dark blue background,
+                               title label, green data label, gray status label.
+
+  5. camera_init()           — Sets up camera hardware (XCLK, I2C, sensor detect,
+                               ISP, CSI controller). Does NOT start streaming.
+
+  6. network_init()          — Configures Ethernet with static IP, starts TCP
+                               server task listening on port 5000. Registers two
+                               callbacks: on_data_received and on_client_disconnected.
+
+================================================================================
+  COMPONENTS
+================================================================================
+
+  components/display/
+  -------------------
+    Files:  display_init.c, include/display_init.h, include/display_config.h
+    What:   Initializes the MIPI DSI display hardware.
+    How:    Powers on backlight (GPIO 26), enables MIPI DSI PHY via internal LDO
+            (channel 3, 2500mV), creates DSI bus, configures JD9365 panel at
+            60MHz pixel clock (~52Hz refresh), resets and turns on the panel.
+    Returns: esp_lcd_panel_handle_t used by LVGL and the camera.
+    Config: display_config.h defines LCD_H_RES (800), LCD_V_RES (1280),
+            bit depth (24), DSI lanes (2), GPIO pins.
+
+  components/ui/
+  --------------
+    Files:  ui.c, include/ui.h
+    What:   LVGL user interface for telemetry display.
+    Screen: Dark blue background (0x003366).
+            Title: "The data being sent is:" — white, 32px, centered near top.
+            Data:  Green, 48px, centered — shows telemetry or "Waiting...".
+            Status: Gray, 24px, bottom — shows IP and port.
+    API:
+      ui_init(disp)          — Creates all widgets on the given display.
+      ui_set_text(text)      — Updates the data label. Safely skips if LVGL is
+                               locked (camera active) to prevent corruption.
+      ui_set_status(status)  — Updates the status label. Same lock safety.
+      ui_refresh()           — Forces a full screen redraw. Used after camera
+                               stops to overwrite stale camera frame data in
+                               the DPI frame buffer.
+    Key detail: ui_set_text and ui_set_status check the return value of
+    lvgl_port_lock(0). If the lock is held (camera streaming), they return
+    without touching LVGL. This prevents state corruption.
+
+  components/camera/
+  ------------------
+    Files:  camera.c, include/camera.h
+    What:   OV5647 MIPI CSI camera pipeline with zero-copy display output.
+    Pipeline:
+      OV5647 sensor (RAW8, 800x1280)
+        -> MIPI CSI controller (2 lanes, 400 Mbps)
+        -> ISP (RAW8 GBRG bayer -> RGB888, 80MHz clock)
+        -> DMA writes directly into DPI panel's frame buffer (zero-copy)
+
+    The OV5647 sensor driver is NOT in this component. It comes from the
+    espressif__esp_cam_sensor package, enabled by CONFIG_CAMERA_OV5647=y in
+    sdkconfig. This component handles the plumbing around it.
+
+    Init (camera_init):
+      - Starts 24MHz XCLK on GPIO 20 via ESP clock router
+      - Resets GPIO 7/8, creates I2C master bus, scans for devices
+      - Creates SCCB I/O handle for sensor communication
+      - Runs the esp_cam_sensor detect loop — finds the OV5647 automatically
+      - Applies default sensor format (800x1280 RAW8)
+      - Creates and enables ISP processor (RAW8 -> RGB888)
+      - Creates, configures callbacks, and enables CSI controller
+
+    Start (camera_start):
+      - Gets the DPI panel's frame buffer pointer (zero-copy target)
+      - Creates semaphores for task synchronization
+      - Spawns camera_stream_task at priority 6
+
+    Stream task (camera_stream_task):
+      - Takes the LVGL lock (blocks LVGL rendering for the duration)
+      - Clears the frame buffer to black
+      - Starts sensor streaming and CSI controller
+      - Loops calling esp_cam_ctlr_receive() — each call triggers CSI DMA
+        to write the next frame directly into the display's frame buffer
+      - On exit: releases LVGL lock, signals s_task_done semaphore
+
+    Stop (camera_stop):
+      - Sets s_running = false
+      - Waits for stream task to exit via s_task_done semaphore (up to 2s)
+        The sensor keeps streaming so receive() returns naturally on the
+        next frame (~33ms at 30fps), then the task sees s_running=false
+        and exits.
+      - After task exits: stops sensor stream, stops CSI controller
+      - Disables and re-enables CSI controller to flush internal queue
+        state, ensuring clean restart on next camera_start()
+      - Deletes semaphores
+
+    camera_is_running() — returns true if camera is actively streaming.
+
+  components/network/
+  -------------------
+    Files:  network.c, network_utils.c, include/network.h, include/network_utils.h
+    What:   Ethernet + TCP server for receiving telemetry.
+    Config: Static IP 192.168.1.100, gateway 192.168.1.1, port 5000.
+    Hardware: ESP32-P4 internal MAC + IP101 PHY.
+    How:    Initializes TCP/IP stack, creates Ethernet interface with static IP
+            (DHCP disabled), installs Ethernet driver, registers event handlers,
+            starts Ethernet. Then spawns tcp_server_task.
+    TCP server:
+      - Creates listening socket with SO_REUSEADDR
+      - Binds to port 5000, listens with backlog of 1
+      - Outer loop: accepts client connections
+      - Inner loop: receives data, sanitizes it, calls data_callback
+      - On client disconnect (recv returns 0): closes socket, calls
+        disconnect_callback
+      - Loops back to accept the next client
+    Callbacks:
+      data_callback        — called with each received message
+      disconnect_callback  — called when a client disconnects
+
+  components/imx500/
+  ------------------
+    (Exists in the components directory but is separate from the camera
+    pipeline described above. Not part of the current telemetry/camera flow.)
+
+================================================================================
+  DATA FLOW
+================================================================================
+
+  Normal telemetry mode:
+    sender.py -> TCP -> network.c -> on_data_received() -> ui_set_text()
+    LVGL renders text to its draw buffer -> DMA2D copies to DPI frame buffer
+    -> DSI PHY scans frame buffer to JD9365 display
+
+  Camera mode:
+    sender.py sends "__CAM_START__" -> camera_start() -> stream task starts
+    Stream task locks LVGL, takes over DPI frame buffer
+    OV5647 -> CSI -> ISP -> DMA -> DPI frame buffer (bypasses LVGL entirely)
+    Telemetry still arrives via TCP, gets buffered in s_last_data (main.c)
+
+  Camera stops:
+    sender.py sends "__CAM_STOP__" (or disconnects) -> camera_stop()
+    Stream task exits, releases LVGL lock
+    ui_refresh() invalidates entire screen -> LVGL redraws everything
+    ui_set_text(s_last_data) shows most recent telemetry value
+
+  Client disconnect:
+    TCP recv returns 0 -> on_client_disconnected()
+    camera_stop() (if running), ui_refresh(), show last data
+    Server loops back to accept() for the next client
+
+================================================================================
+  KEY SDKCONFIG OPTIONS
+================================================================================
+
+  CONFIG_CAMERA_OV5647=y              Enables OV5647 sensor driver in
+                                      esp_cam_sensor package
+
+  CONFIG_DMA2D_OPERATION_FUNC_IN_IRAM=y   DMA2D operations in IRAM for speed
+
+  # CONFIG_DMA2D_ISR_IRAM_SAFE is not set
+      Disabled because LVGL's async framebuffer copy callback (on_job_picked)
+      is not placed in IRAM. Enabling this causes a runtime check failure
+      that crashes LVGL rendering.
+
+================================================================================
+  FILE LOCATIONS (relative to ReceiveTest/)
+================================================================================
+
+  main/main.c                           Entry point, boot sequence, callbacks
+  main/CMakeLists.txt                   Main component dependencies
+  main/idf_component.yml                IDF component manager dependencies
+
+  components/display/display_init.c     DSI display hardware init
+  components/display/include/display_init.h
+  components/display/include/display_config.h   Resolution, pins, DSI config
+
+  components/ui/ui.c                    LVGL screen layout and update functions
+  components/ui/include/ui.h
+
+  components/camera/camera.c            Camera pipeline setup and streaming
+  components/camera/include/camera.h
+
+  components/network/network.c          Ethernet + TCP server
+  components/network/network_utils.c    Payload sanitization
+  components/network/include/network.h
+  components/network/include/network_utils.h
+
+  sdkconfig                             Build configuration (OV5647, DMA2D, etc.)

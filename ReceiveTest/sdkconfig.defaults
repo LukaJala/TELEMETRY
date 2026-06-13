@@ -39,6 +39,8 @@ CONFIG_ESP_MAIN_TASK_STACK_SIZE=8192
 
 # Camera sensor driver
 CONFIG_CAMERA_OV5647=y
+# Full-sensor 1280x960 RAW10 2x2-binning mode (wide FOV; scaled to display via PPA)
+CONFIG_CAMERA_OV5647_MIPI_RAW10_1280X960_BINNING_45FPS=y
 
 # DMA2D: keep ISR and operation funcs in IRAM to prevent stalls
 # during DSI pixel transfers (eliminates flash cache miss latency)

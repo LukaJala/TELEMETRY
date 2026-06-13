@@ -78,8 +78,7 @@ esp_lcd_panel_handle_t display_init(void)
     };
 
     ESP_ERROR_CHECK(
-        esp_lcd_new_panel_jd9365(panel_io, &panel_cfg, &panel)
-    );
+        esp_lcd_new_panel_jd9365(panel_io, &panel_cfg, &panel));
 
     /* Initialize panel */
     ESP_ERROR_CHECK(esp_lcd_panel_reset(panel));

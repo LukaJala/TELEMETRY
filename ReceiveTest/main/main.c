@@ -25,14 +25,14 @@ static esp_lcd_panel_handle_t s_panel = NULL;
 static display_data_t s_can_data;
 
 /* Commands sent from broadcaster.py / sender.py */
-#define CMD_CAM_START   "__CAM_START__"
-#define CMD_CAM_STOP    "__CAM_STOP__"
-#define CMD_TAB_0       "__TAB_0__"
-#define CMD_TAB_1       "__TAB_1__"
-#define CMD_TAB_2       "__TAB_2__"
+#define CMD_CAM_START "__CAM_START__"
+#define CMD_CAM_STOP "__CAM_STOP__"
+#define CMD_TAB_0 "__TAB_0__"
+#define CMD_TAB_1 "__TAB_1__"
+#define CMD_TAB_2 "__TAB_2__"
 
 /* Size of a binary CAN-over-TCP frame: [0x01 magic][CAN_ID 4B][DLC 1B][data 8B] */
-#define CAN_FRAME_SIZE  14
+#define CAN_FRAME_SIZE 14
 
 /*
  * CONNECT CALLBACK
@@ -69,42 +69,49 @@ static void on_client_disconnected(void)
 static void on_data_received(const uint8_t *data, int length)
 {
     /* Text command path */
-    if (length > 0 && data[0] >= 0x20) {
+    if (length > 0 && data[0] >= 0x20)
+    {
         const char *cmd = (const char *)data;
 
-        if (strcmp(cmd, CMD_CAM_START) == 0) {
+        if (strcmp(cmd, CMD_CAM_START) == 0)
+        {
             ESP_LOGI(TAG, "Camera start command received");
-            if (camera_start(s_panel) != ESP_OK) {
+            if (camera_start(s_panel) != ESP_OK)
+            {
                 ui_set_text("Camera unavailable");
             }
-
-        } else if (strcmp(cmd, CMD_CAM_STOP) == 0) {
+        }
+        else if (strcmp(cmd, CMD_CAM_STOP) == 0)
+        {
             ESP_LOGI(TAG, "Camera stop command received");
             camera_stop();
             ui_refresh();
             ui_set_text("Waiting...");
-
-        } else if (strcmp(cmd, CMD_TAB_0) == 0) {
+        }
+        else if (strcmp(cmd, CMD_TAB_0) == 0)
+        {
             ui_set_tab(0);
-        } else if (strcmp(cmd, CMD_TAB_1) == 0) {
+        }
+        else if (strcmp(cmd, CMD_TAB_1) == 0)
+        {
             ui_set_tab(1);
-        } else if (strcmp(cmd, CMD_TAB_2) == 0) {
+        }
+        else if (strcmp(cmd, CMD_TAB_2) == 0)
+        {
             ui_set_tab(2);
         }
         return;
     }
 
     /* Binary CAN frame path */
-    if (length != CAN_FRAME_SIZE) {
+    if (length != CAN_FRAME_SIZE)
+    {
         ESP_LOGW(TAG, "Unexpected frame length %d — dropping", length);
         return;
     }
 
     /* Unpack the TCP envelope: [0x01 magic][CAN_ID 4B LE][DLC 1B][payload 8B] */
-    uint32_t can_id = (uint32_t)data[1]
-                    | ((uint32_t)data[2] << 8)
-                    | ((uint32_t)data[3] << 16)
-                    | ((uint32_t)data[4] << 24);
+    uint32_t can_id = (uint32_t)data[1] | ((uint32_t)data[2] << 8) | ((uint32_t)data[3] << 16) | ((uint32_t)data[4] << 24);
     /* data[5] is DLC — not needed by the router, payload is always 8B */
     const uint8_t *payload = &data[6];
 
@@ -113,7 +120,8 @@ static void on_data_received(const uint8_t *data, int length)
     ESP_LOGD(TAG, "CAN frame 0x%08lX decoded (flags=0x%lX)",
              (unsigned long)can_id, (unsigned long)s_can_data.update_flags);
 
-    if (!camera_is_running()) {
+    if (!camera_is_running())
+    {
         ui_update_can_data(&s_can_data);
     }
     s_can_data.update_flags = 0;
@@ -173,7 +181,8 @@ void app_main(void)
      * - Sets up I2C/SCCB, CSI controller, and ISP
      * - Does not start streaming yet
      **/
-    if (camera_init() != ESP_OK) {
+    if (camera_init() != ESP_OK)
+    {
         ESP_LOGW(TAG, "Camera init failed - camera mode will not be available");
     }
 
@@ -199,7 +208,8 @@ void app_main(void)
      * - TCP server task handles network
      * - Camera stream task handles camera (when active)
      **/
-    while (1) {
+    while (1)
+    {
         vTaskDelay(pdMS_TO_TICKS(1000));
     }
 }

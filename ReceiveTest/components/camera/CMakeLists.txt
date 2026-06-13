@@ -6,10 +6,12 @@ idf_component_register(
     REQUIRES
         esp_driver_cam
         esp_driver_isp
+        esp_driver_ppa
         esp_driver_i2c
         esp_driver_gpio
         esp_lcd
         esp_hw_support
+        esp_mm
         esp_lvgl_port
         espressif__esp_cam_sensor
         espressif__esp_sccb_intf
