@@ -4,12 +4,12 @@
  *
  * Pipeline: OV5647 (RAW10, 1280x960 full-sensor 2x2 binning)
  *             -> CSI -> ISP (RAW10 -> RGB565) -> capture buffer (PSRAM)
- *             -> PPA scale + 90deg rotate + RGB565->RGB888 -> DPI frame buffer
+ *             -> PPA scale + 90deg rotate -> DPI frame buffer (RGB565)
  *
  * Performance notes (this path is PSRAM-bandwidth bound):
- *   - Capture is RGB565 (2 B/px) instead of RGB888 to cut ~1/3 of the camera's
- *     PSRAM traffic. PPA converts up to RGB888 for the display, so the display
- *     and UI stay RGB888 — no changes needed there.
+ *   - The whole path is RGB565 (2 B/px): capture, PPA, and the display buffer.
+ *     This minimizes PSRAM traffic — both the per-frame camera work and the
+ *     constant DPI scan-out (see display_config.h, LCD_BIT_PER_PIXEL=16).
  *   - Two capture buffers are used ping-pong with a NON-blocking PPA: the CSI
  *     captures frame N+1 while the PPA scales/rotates frame N, so the per-frame
  *     time is max(capture, scale) instead of their sum.
@@ -62,10 +62,12 @@ static const char *TAG = "CAMERA";
 #define CAP_FB_SIZE (SENS_H_RES * SENS_V_RES * SENS_BPP)
 #define CAP_BUF_COUNT 2 /* ping-pong: capture frame N+1 while PPA scales frame N */
 
-/* Display frame buffer (panel native portrait; LVGL presents it rotated) */
+/* Display frame buffer (panel native portrait; LVGL presents it rotated).
+ * RGB565 to match the display (see display_config.h) — keeps the whole
+ * capture->scale->display path at 2 B/px. */
 #define DISP_H_RES 800
 #define DISP_V_RES 1280
-#define DISP_FB_SIZE (DISP_H_RES * DISP_V_RES * 3) /* RGB888 */
+#define DISP_FB_SIZE (DISP_H_RES * DISP_V_RES * 2) /* RGB565 */
 
 /* MIPI lane rate for the 1280x960 RAW10 binning mode: IDI 88.33MHz * 5 ≈ 442 Mbps */
 #define CAM_LANE_BITRATE_MBPS 442
@@ -83,6 +85,16 @@ static const char *TAG = "CAMERA";
 #define CAM_PPA_MIRROR_Y false
 #define CAM_PPA_SCALE_X (1.0f)    /* 16/16 */
 #define CAM_PPA_SCALE_Y (0.8125f) /* 13/16 */
+
+/* ---- Auto-exposure tuning (fixes bright-light wash-out) ----
+ * The 1280x960 mode runs the sensor's auto-exposure with a fairly bright AE
+ * target (driver default 0x50/80) and a maxed-out gain ceiling (0x3ff). In
+ * bright scenes that blows highlights to white. Lowering the AE target makes
+ * the AE aim darker so highlights are preserved; clamping the gain ceiling
+ * stops the AGC from over-amplifying. Tune CAM_AE_TARGET DOWN if it still
+ * washes out, UP if it's now too dark (valid range 2..235). */
+#define CAM_AE_TARGET 0x34     /* 52/255 (driver default 0x50) */
+#define CAM_GAIN_CEILING 0x01F8 /* ~half of the mode's 0x3FF ceiling */
 
 #define CAM_SCCB_SCL_IO 8
 #define CAM_SCCB_SDA_IO 7
@@ -182,7 +194,7 @@ static void camera_stream_task(void *arg)
             .pic_h = DISP_V_RES,
             .block_offset_x = off_x,
             .block_offset_y = 0,
-            .srm_cm = PPA_SRM_COLOR_MODE_RGB888,
+            .srm_cm = PPA_SRM_COLOR_MODE_RGB565,
         },
         .rotation_angle = CAM_PPA_ROTATION,
         .scale_x = CAM_PPA_SCALE_X,
@@ -363,6 +375,21 @@ esp_err_t camera_init(void)
     ESP_ERROR_CHECK(esp_cam_sensor_set_format(sensor, chosen));
     ESP_LOGI(TAG, "Sensor format: %s", chosen->name);
 
+    /* --- Exposure tuning: lower AE target + clamp gain ceiling so bright
+     * scenes don't wash out (see CAM_AE_TARGET / CAM_GAIN_CEILING above) --- */
+    int ae_target = CAM_AE_TARGET;
+    esp_err_t ae_ret = esp_cam_sensor_set_para_value(
+        sensor, ESP_CAM_SENSOR_EXPOSURE_VAL, &ae_target, sizeof(ae_target));
+    if (ae_ret != ESP_OK)
+    {
+        ESP_LOGW(TAG, "Failed to set AE target: 0x%x (%s)", ae_ret, esp_err_to_name(ae_ret));
+    }
+    /* Gain ceiling: 0x3A18 = high byte, 0x3A19 = low byte */
+    esp_sccb_transmit_reg_a16v8(sccb_io, 0x3A18, (CAM_GAIN_CEILING >> 8) & 0xFF);
+    esp_sccb_transmit_reg_a16v8(sccb_io, 0x3A19, CAM_GAIN_CEILING & 0xFF);
+    ESP_LOGI(TAG, "Exposure tuned: AE target=0x%02X, gain ceiling=0x%03X",
+             ae_target, CAM_GAIN_CEILING);
+
     /* --- Capture buffers (cache-line aligned for CSI/PPA DMA) --- */
     for (int i = 0; i < CAP_BUF_COUNT; i++)
     {
@@ -412,7 +439,7 @@ esp_err_t camera_init(void)
     ESP_ERROR_CHECK(esp_cam_ctlr_register_event_callbacks(s_cam_handle, &cbs, NULL));
     ESP_ERROR_CHECK(esp_cam_ctlr_enable(s_cam_handle));
 
-    /* --- PPA client for scale + rotate + RGB565->RGB888 into the display buffer --- */
+    /* --- PPA client for scale + rotate into the (RGB565) display buffer --- */
     s_ppa_done = xSemaphoreCreateBinary();
     if (!s_ppa_done)
     {
@@ -429,7 +456,7 @@ esp_err_t camera_init(void)
     };
     ESP_ERROR_CHECK(ppa_client_register_event_callbacks(s_ppa, &ppa_cbs));
 
-    ESP_LOGI(TAG, "Camera ready (%s -> CSI %dx%d RAW10 -> RGB565 -> PPA -> %dx%d RGB888)",
+    ESP_LOGI(TAG, "Camera ready (%s -> CSI %dx%d RAW10 -> RGB565 -> PPA -> %dx%d RGB565)",
              sensor->name, SENS_H_RES, SENS_V_RES, DISP_H_RES, DISP_V_RES);
     return ESP_OK;
 }

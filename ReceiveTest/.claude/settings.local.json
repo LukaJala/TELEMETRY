@@ -28,7 +28,8 @@
       "Read(//c//**)",
       "Bash(python3 -c \"import json,sys; cmds=json.load\\(sys.stdin\\); print\\(cmds[0]['command'][:500]\\)\")",
       "Bash(\"C:/Users/Asus M16/esp/v5.5.2/esp-idf/export.ps1\")",
-      "Bash(idf.py build *)"
+      "Bash(idf.py build *)",
+      "Bash(awk '{o+=gsub\\(/{/,\"{\"\\); c+=gsub\\(/}/,\"}\"\\)} END{print \"open=\"o\" close=\"c}' components/camera/camera.c)"
     ]
   }
 }

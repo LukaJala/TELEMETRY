@@ -156,11 +156,11 @@ void app_main(void)
     lv_display_t *disp = lvgl_port_add_disp_dsi(
         &(lvgl_port_display_cfg_t){
             .panel_handle = s_panel,
-            .buffer_size = LCD_H_RES * LCD_V_RES * 3,
+            .buffer_size = LCD_H_RES * LCD_V_RES * (LCD_BIT_PER_PIXEL / 8),
             .double_buffer = false,
             .hres = LCD_H_RES,
             .vres = LCD_V_RES,
-            .color_format = LV_COLOR_FORMAT_RGB888,
+            .color_format = LV_COLOR_FORMAT_RGB565,
             .flags.buff_spiram = true,
             .flags.sw_rotate = true,
         },
