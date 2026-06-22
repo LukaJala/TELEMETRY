@@ -41,6 +41,11 @@ static display_data_t s_can_data;
 static void on_client_connected(void)
 {
     ESP_LOGI(TAG, "Client connected");
+    /* Defensive: always begin a session from a known state. If a previous
+     * client died mid-stream, the disconnect handler already stopped the
+     * camera, but this guarantees it regardless of how the last session ended.
+     * camera_stop() is a no-op when the camera isn't running. */
+    camera_stop();
     ui_set_status("Connected");
 }
 
@@ -124,6 +129,19 @@ static void on_data_received(const uint8_t *data, int length)
     {
         ui_update_can_data(&s_can_data);
     }
+
+    /* Mirror the decoded state out to the Pi (relay.py) for the pit screen.
+     * Sent every frame; the network sender task forwards it at a steady rate. */
+    pit_telemetry_t pit = {
+        .battery_v = s_can_data.bps_power.pack_voltage_v,
+        .battery_a = s_can_data.bps_power.pack_current_a,
+        .rpm = (float)s_can_data.mc_status1.speed_rpm,
+        .temperature = (float)s_can_data.mc_status2.motor_temp_c,
+        .speed = s_can_data.vega_status.speed_kmh,
+        .fault_code = (uint16_t)s_can_data.bps_safety.fault_code,
+    };
+    network_set_telemetry(&pit);
+
     s_can_data.update_flags = 0;
 }
 

@@ -72,6 +72,12 @@ static const char *TAG = "CAMERA";
 /* MIPI lane rate for the 1280x960 RAW10 binning mode: IDI 88.33MHz * 5 ≈ 442 Mbps */
 #define CAM_LANE_BITRATE_MBPS 442
 
+/* Frame receive timeout (ms). Finite (not MAX_DELAY) so the stream loop re-checks
+ * s_running periodically — guarantees camera_stop() can always tear the task down
+ * (and release the LVGL lock) even if the sensor stalls and stops delivering
+ * frames. At normal frame rates receive() returns long before this fires. */
+#define CAM_RECV_TIMEOUT_MS 1000
+
 /* ---- PPA scale/rotate knobs (tune on the bench if orientation is off) ----
  * The 1280x960 sensor frame is rotated 90deg CCW to fill the 800x1280 portrait
  * buffer. scale_x maps sensor width (1280) -> output height (1280) = 1.0.
@@ -93,7 +99,7 @@ static const char *TAG = "CAMERA";
  * the AE aim darker so highlights are preserved; clamping the gain ceiling
  * stops the AGC from over-amplifying. Tune CAM_AE_TARGET DOWN if it still
  * washes out, UP if it's now too dark (valid range 2..235). */
-#define CAM_AE_TARGET 0x34     /* 52/255 (driver default 0x50) */
+#define CAM_AE_TARGET 0x34      /* 52/255 (driver default 0x50) */
 #define CAM_GAIN_CEILING 0x01F8 /* ~half of the mode's 0x3FF ceiling */
 
 #define CAM_SCCB_SCL_IO 8
@@ -230,16 +236,19 @@ static void camera_stream_task(void *arg)
     /* Prime: capture the first frame into buffer 0. */
     int cur = 0;
     trans.buffer = s_cap_buf[cur];
-    esp_err_t ret = esp_cam_ctlr_receive(s_cam_handle, &trans, ESP_CAM_CTLR_MAX_DELAY);
+    esp_err_t ret = esp_cam_ctlr_receive(s_cam_handle, &trans, CAM_RECV_TIMEOUT_MS);
 
     int frame_count = 0;
     while (s_running)
     {
         if (ret != ESP_OK)
         {
-            ESP_LOGW(TAG, "receive failed: err=0x%x (%s)", ret, esp_err_to_name(ret));
+            /* A timeout just means no frame this interval (or the sensor stalled);
+             * loop back so s_running is re-checked. Only log genuine errors. */
+            if (ret != ESP_ERR_TIMEOUT)
+                ESP_LOGW(TAG, "receive failed: err=0x%x (%s)", ret, esp_err_to_name(ret));
             trans.buffer = s_cap_buf[cur];
-            ret = esp_cam_ctlr_receive(s_cam_handle, &trans, ESP_CAM_CTLR_MAX_DELAY);
+            ret = esp_cam_ctlr_receive(s_cam_handle, &trans, CAM_RECV_TIMEOUT_MS);
             continue;
         }
 
@@ -250,7 +259,7 @@ static void camera_stream_task(void *arg)
         /* Capture the next frame into the other buffer while the PPA runs. */
         int nxt = cur ^ 1;
         trans.buffer = s_cap_buf[nxt];
-        ret = esp_cam_ctlr_receive(s_cam_handle, &trans, ESP_CAM_CTLR_MAX_DELAY);
+        ret = esp_cam_ctlr_receive(s_cam_handle, &trans, CAM_RECV_TIMEOUT_MS);
 
         /* Wait for the PPA to finish with s_cap_buf[cur] before it gets reused. */
         if (pret == ESP_OK)

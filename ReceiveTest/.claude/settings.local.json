@@ -29,7 +29,13 @@
       "Bash(python3 -c \"import json,sys; cmds=json.load\\(sys.stdin\\); print\\(cmds[0]['command'][:500]\\)\")",
       "Bash(\"C:/Users/Asus M16/esp/v5.5.2/esp-idf/export.ps1\")",
       "Bash(idf.py build *)",
-      "Bash(awk '{o+=gsub\\(/{/,\"{\"\\); c+=gsub\\(/}/,\"}\"\\)} END{print \"open=\"o\" close=\"c}' components/camera/camera.c)"
+      "Bash(awk '{o+=gsub\\(/{/,\"{\"\\); c+=gsub\\(/}/,\"}\"\\)} END{print \"open=\"o\" close=\"c}' components/camera/camera.c)",
+      "Bash(grep -rnB3 timeout_ms __TRACKED_VAR__/components/esp_driver_cam/include/esp_cam_ctlr.h)",
+      "Bash(grep -nA8 \"static void on_client_connected\" main/main.c)",
+      "Bash(awk '/typedef struct/,/} *display_data_t/' components/can_spec/include/display_can_spec.h)",
+      "Bash(awk '/typedef struct/{buf=\"\"; inb=1} inb{buf=buf $0 \"\\\\n\"} /} display_\\(mc_status1|mc_status2|temp_extremes|vega_status\\)_t;/{print buf \"----\"; inb=0}' components/can_spec/include/display_can_spec.h)",
+      "Bash(ls -la pi_relay/)",
+      "Bash(ls pi_relay/)"
     ]
   }
 }

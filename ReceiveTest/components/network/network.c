@@ -10,9 +10,11 @@
 
 #include <string.h>
 #include <stdint.h>
+#include <errno.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "esp_log.h"
+#include "esp_timer.h"
 #include "esp_event.h"
 #include "esp_netif.h"
 #include "esp_eth.h"
@@ -28,8 +30,8 @@ static const char *TAG = "NETWORK";
 /* ============================================================
  * CONFIGURATION - Change these if needed
  * ============================================================ */
-#define STATIC_IP "192.168.1.100"    /* ESP32 IP on IP101 interface */
-#define STATIC_GATEWAY "192.168.1.1" /* Laptop IP on IP101 side */
+#define STATIC_IP "192.168.77.1"     /* ESP32 IP on IP101 (native) port — direct Pi link */
+#define STATIC_GATEWAY "192.168.77.2" /* Pi dongle is the only peer on this link */
 #define STATIC_NETMASK "255.255.255.0"
 #define TCP_PORT 5000
 
@@ -46,6 +48,19 @@ static const char *TAG = "NETWORK";
 #define W5500_SPI_HOST SPI2_HOST
 #define W5500_SPI_MHZ 8
 
+/* Pit telemetry → Raspberry Pi Zero 2 W (runs relay.py) reached via its
+ * USB-Ethernet adapter on the P4's NATIVE port. The Pi is a TCP SERVER on
+ * port 5000; we connect to it as a client and stream a fixed 30-byte packet
+ * that relay.py + the laptop's server.py already expect:
+ *   '>H I f f f f f H H'  =
+ *   magic(0xA55A) seq battery_v battery_a rpm temperature speed fault checksum
+ * (all big-endian; checksum = sum of bytes[0..27] & 0xFFFF). */
+#define PI_IP "192.168.77.2"
+#define PI_PORT 5000
+#define PIT_MAGIC 0xA55A
+#define PIT_PACKET_SIZE 30
+#define PI_SEND_INTERVAL_MS 100 /* 10 Hz — steady cadence for the laptop's seq/loss math */
+
 /* CAN frame over TCP is exactly 14 bytes: [0x01 magic][CAN_ID 4B][DLC 1B][data 8B]
  * The 0x01 prefix distinguishes binary frames from text commands, which are always
  * printable ASCII (>= 0x20) and therefore can never start with 0x01. */
@@ -59,6 +74,14 @@ static const char *TAG = "NETWORK";
  * bytes plus a full recv() never exceed the buffer (overflow + reset = desync) */
 #define ACCUM_SIZE (CAN_FRAME_SIZE * 32) /* 448 bytes */
 
+/* Liveness / dead-peer detection. recv() is given a finite timeout so the
+ * server task wakes periodically instead of blocking forever. If no data has
+ * arrived for LINK_TIMEOUT_S (cable pull, sender crash, laptop sleep — none of
+ * which produce a clean TCP close), the connection is treated as dead and torn
+ * down, which fires the disconnect callback and stops the camera. */
+#define RECV_TIMEOUT_S 2 /* recv() wakes at least this often */
+#define LINK_TIMEOUT_S 5 /* silence longer than this => peer is dead */
+
 /* ============================================================
  * GLOBAL STATE
  * ============================================================ */
@@ -67,6 +90,12 @@ static network_data_callback_t data_callback = NULL;
 static network_connect_callback_t connect_callback = NULL;
 static network_disconnect_callback_t disconnect_callback = NULL;
 static esp_netif_t *eth_netif = NULL;
+
+/* Latest telemetry snapshot, written by network_set_telemetry() (CAN task)
+ * and read by the pit sender task. Guarded by a lightweight spinlock since
+ * the copy is tiny. */
+static pit_telemetry_t pit_latest;
+static portMUX_TYPE pit_mux = portMUX_INITIALIZER_UNLOCKED;
 
 /* ============================================================
  * ETHERNET EVENT HANDLER
@@ -185,6 +214,19 @@ static void tcp_server_task(void *pvParameters)
         ESP_LOGI(TAG, "Client connected from %s", inet_ntoa(client_addr.sin_addr));
         accum_len = 0;
 
+        /* --- Dead-peer detection ---
+         * SO_RCVTIMEO makes recv() return periodically so we can check liveness.
+         * SO_KEEPALIVE actively probes the peer so a half-open TCP connection is
+         * detected even if no data is expected. */
+        struct timeval rcv_to = {.tv_sec = RECV_TIMEOUT_S, .tv_usec = 0};
+        setsockopt(client_sock, SOL_SOCKET, SO_RCVTIMEO, &rcv_to, sizeof(rcv_to));
+        int ka_enable = 1, ka_idle = 3, ka_intvl = 1, ka_cnt = 3;
+        setsockopt(client_sock, SOL_SOCKET, SO_KEEPALIVE, &ka_enable, sizeof(ka_enable));
+        setsockopt(client_sock, IPPROTO_TCP, TCP_KEEPIDLE, &ka_idle, sizeof(ka_idle));
+        setsockopt(client_sock, IPPROTO_TCP, TCP_KEEPINTVL, &ka_intvl, sizeof(ka_intvl));
+        setsockopt(client_sock, IPPROTO_TCP, TCP_KEEPCNT, &ka_cnt, sizeof(ka_cnt));
+        int64_t last_rx_us = esp_timer_get_time();
+
         if (connect_callback != NULL)
         {
             connect_callback();
@@ -195,16 +237,31 @@ static void tcp_server_task(void *pvParameters)
             int space = (int)sizeof(raw);
             int len = recv(client_sock, raw, space, 0);
 
-            if (len < 0)
-            {
-                ESP_LOGE(TAG, "Receive error");
-                break;
-            }
-            else if (len == 0)
+            if (len == 0)
             {
                 ESP_LOGI(TAG, "Client disconnected");
                 break;
             }
+            if (len < 0)
+            {
+                /* recv() timed out (SO_RCVTIMEO) — not fatal on its own, but if
+                 * the peer has been silent too long it is dead (unclean drop).
+                 * Tearing down here triggers the disconnect callback => the
+                 * camera is stopped and the UI reset instead of hanging. */
+                if (errno == EWOULDBLOCK || errno == EAGAIN)
+                {
+                    if (esp_timer_get_time() - last_rx_us > (int64_t)LINK_TIMEOUT_S * 1000000)
+                    {
+                        ESP_LOGW(TAG, "No data for %ds — peer assumed dead, dropping connection", LINK_TIMEOUT_S);
+                        break;
+                    }
+                    continue; /* still within grace window, keep waiting */
+                }
+                ESP_LOGE(TAG, "Receive error (errno=%d) — dropping connection", errno);
+                break;
+            }
+
+            last_rx_us = esp_timer_get_time();
 
             /* Append new bytes to accumulator, guard against overflow */
             if (accum_len + len > (int)sizeof(accum))
@@ -351,6 +408,109 @@ static esp_err_t init_w5500(void)
 }
 
 /* ============================================================
+ * PIT TELEMETRY (TCP CLIENT TO THE PI)
+ * ============================================================ */
+
+/* Public setter — called from the CAN/decode task with the latest values.
+ * Just copies into the shared snapshot; the sender task owns the cadence. */
+void network_set_telemetry(const pit_telemetry_t *t)
+{
+    portENTER_CRITICAL(&pit_mux);
+    pit_latest = *t;
+    portEXIT_CRITICAL(&pit_mux);
+}
+
+/* Append a big-endian IEEE-754 float (matches Python struct '>f'). */
+static void put_be_float(uint8_t *p, float f)
+{
+    uint32_t bits;
+    memcpy(&bits, &f, sizeof(bits)); /* ESP32 stores little-endian; reorder below */
+    p[0] = (uint8_t)(bits >> 24);
+    p[1] = (uint8_t)(bits >> 16);
+    p[2] = (uint8_t)(bits >> 8);
+    p[3] = (uint8_t)(bits);
+}
+
+/* Build the 30-byte '>HIfffffHH' packet relay.py / server.py expect. */
+static void build_packet(uint8_t out[PIT_PACKET_SIZE], uint32_t seq, const pit_telemetry_t *t)
+{
+    out[0] = (uint8_t)(PIT_MAGIC >> 8);
+    out[1] = (uint8_t)(PIT_MAGIC);
+    out[2] = (uint8_t)(seq >> 24);
+    out[3] = (uint8_t)(seq >> 16);
+    out[4] = (uint8_t)(seq >> 8);
+    out[5] = (uint8_t)(seq);
+    put_be_float(&out[6], t->battery_v);
+    put_be_float(&out[10], t->battery_a);
+    put_be_float(&out[14], t->rpm);
+    put_be_float(&out[18], t->temperature);
+    put_be_float(&out[22], t->speed);
+    out[26] = (uint8_t)(t->fault_code >> 8);
+    out[27] = (uint8_t)(t->fault_code);
+
+    uint16_t sum = 0;
+    for (int i = 0; i < PIT_PACKET_SIZE - 2; i++)
+    {
+        sum = (uint16_t)(sum + out[i]);
+    }
+    out[28] = (uint8_t)(sum >> 8);
+    out[29] = (uint8_t)(sum);
+}
+
+/* Maintains the TCP connection to the Pi and streams packets at a fixed rate.
+ * Reconnects on any failure; the Pi being down or rebooting is non-fatal. */
+static void pit_sender_task(void *pvParameters)
+{
+    uint32_t seq = 0;
+
+    while (1)
+    {
+        int sock = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+        if (sock < 0)
+        {
+            vTaskDelay(pdMS_TO_TICKS(2000));
+            continue;
+        }
+
+        struct sockaddr_in dest = {
+            .sin_family = AF_INET,
+            .sin_port = htons(PI_PORT),
+            .sin_addr.s_addr = esp_ip4addr_aton(PI_IP),
+        };
+
+        if (connect(sock, (struct sockaddr *)&dest, sizeof(dest)) < 0)
+        {
+            ESP_LOGW(TAG, "Pi connect %s:%d failed (errno=%d) — retrying", PI_IP, PI_PORT, errno);
+            close(sock);
+            vTaskDelay(pdMS_TO_TICKS(2000));
+            continue;
+        }
+        ESP_LOGI(TAG, "Connected to Pi %s:%d — streaming telemetry", PI_IP, PI_PORT);
+
+        while (1)
+        {
+            pit_telemetry_t snapshot;
+            portENTER_CRITICAL(&pit_mux);
+            snapshot = pit_latest;
+            portEXIT_CRITICAL(&pit_mux);
+
+            uint8_t packet[PIT_PACKET_SIZE];
+            build_packet(packet, seq, &snapshot);
+
+            if (send(sock, packet, sizeof(packet), 0) < 0)
+            {
+                ESP_LOGW(TAG, "Pi send failed (errno=%d) — reconnecting", errno);
+                break;
+            }
+            seq++;
+            vTaskDelay(pdMS_TO_TICKS(PI_SEND_INTERVAL_MS));
+        }
+
+        close(sock);
+    }
+}
+
+/* ============================================================
  * ETHERNET INITIALIZATION
  * Sets up the hardware, static IP, and starts TCP server
  * ============================================================ */
@@ -432,6 +592,11 @@ esp_err_t network_init(network_data_callback_t data_cb,
     {
         ESP_LOGW(TAG, "W5500 unavailable — running on IP101 only");
     }
+
+    /* --------------------------------------------------------
+     * Start the pit telemetry sender (TCP client → Pi)
+     * -------------------------------------------------------- */
+    xTaskCreate(pit_sender_task, "pit_sender", 4096, NULL, 4, NULL);
 
     /* --------------------------------------------------------
      * Start TCP server in a background task
