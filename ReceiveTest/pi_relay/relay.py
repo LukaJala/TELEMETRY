@@ -1,134 +1,143 @@
 """
-relay.py — Solar Car Telemetry Relay (Raspberry Pi Zero 2 W)
-
-Runs on the Pi inside the car. Receives decoded telemetry packets from the
-ESP32-P4 over Ethernet and forwards each valid packet out the RFD900x radio.
+relay.py - Solar Car Telemetry Relay (Pi Zero 2W version)
+Runs on the raspberry PI Zero 2W inside the car.
 
 Data flow:
-    ESP32 --(TCP 192.168.77.2:5000)--> Pi --(UART /dev/serial0)--> RFD900x ))) laptop server.py
-
-Packet format MUST match build_packet() in network.c and the laptop's server.py:
-    '>H I f f f f f H H' =
-    magic(0xA55A) seq battery_v battery_a rpm temperature speed fault checksum
-    big-endian; checksum = sum(bytes[0..27]) & 0xFFFF
-
-Network setup (one-time, on the Pi):
-    The ESP32 native port is 192.168.77.1; this Pi's USB-Ethernet dongle must be
-    192.168.77.2/24 (no gateway — keep internet on wlan0):
-        sudo nmcli con add type ethernet con-name pi-eth ifname eth0
-        sudo nmcli con mod pi-eth ipv4.method manual ipv4.addresses 192.168.77.2/24
-        sudo nmcli con up pi-eth
-
-UART setup (one-time, on the Pi):
-    /dev/serial0 must map to the PL011 (ttyAMA0), not the mini-UART. In
-    /boot/firmware/config.txt add:  enable_uart=1  and  dtoverlay=disable-bt
-    then disable the serial login console (raspi-config) and reboot.
-
-Runs automatically on boot via /etc/systemd/system/telemetry.service.
+        ESP32 --(TCPI/IP over ethernet)>   PI Zero --(UART)>  RFD900X -->  laptop 
+This script:
+        1. opens a TCP server and waits for the ESP32 to connect.
+        2. Receives telemetry packets from the ESP32.
+        3. Validates each packet (magic number + sum)
+        4. Forwards valid packets over the RFD900x radio via UART serial port.
+Designed to run automatically on boot via system.
 """
-
 import socket
 import struct
 import serial
 import time
 
-# ============================================================
-# Settings
-# ============================================================
-LISTEN_HOST = '0.0.0.0'   # accept the ESP32 from any interface
-LISTEN_PORT = 5000        # the ESP32 connects here
+# Setting
 
-RFD_PORT = '/dev/serial0'  # CHANGED: was '/dev/ttyAMA0' — use the stable symlink (-> ttyAMA0 after disable-bt)
-RFD_BAUD = 57600           # must match the radio's configured serial baud
+# TCP server - the ESP32 connects to this
+LISTEN_HOST = '0.0.0.0'         # accepst any connection from any IP
+LISTEN_PORT = 5000              # ESP32 must connect to this port
 
-# Must match build_packet() in network.c and server.py
+# RFD900X radio on the PI zero GPIO UART PINS
+RFD_PORT = '/dev/serial0' # UART pins and not USB
+RFD_BAUD = 57600
+
+# PACKET format - MUST match the ESP32 and the laptop server.py
+# > big -endian
+# H magic (0xA55A)
+# I sequence 
+# f Battery_v
+# f battery_a
+# f rpm
+# f temperature
+# f speed
+# H fault_code
+# H checksum
 PACKET_FORMAT = '>HIfffffHH'
-PACKET_SIZE   = struct.calcsize(PACKET_FORMAT)   # 30 bytes
-MAGIC         = 0xA55A
+PACKET_SIZE = struct.calcsize(PACKET_FORMAT)
+MAGIC   = 0xA55A
 
+# CHECKSUM
 
-# ============================================================
-# Checksum (matches the ESP32's sum-of-bytes scheme)
-# ============================================================
 def verify_checksum(raw):
-    calculated = sum(raw[:-2]) & 0xFFFF
-    received   = struct.unpack('>H', raw[-2:])[0]
-    return calculated == received
+        """sum checks of all bytes except the final 2 cheksum bytes. """
+        calculated = sum(raw[:-2]) & 0xFFFF
+        received = struct.unpack('>H', raw[-2:])[0]
+        return calculated == received
+
+# DEAD-PEER DETECTION
+
+def enable_keepalive(conn):
+        """Detect a silently-dead ESP32 and recover.
+
+        When the board reboots (e.g. restarting `idf.py monitor` pulses the
+        auto-reset line) it drops its TCP socket WITHOUT a clean FIN/RST. The
+        recv() in relay_loop would then block forever on that zombie connection,
+        so we'd never return to accept() and the board could never reconnect
+        (it sees ECONNRESET/ETIMEDOUT). Linux TCP keepalive tears the dead
+        socket down in ~5s, which makes recv() raise and kicks us back to
+        accept() to take the board's new connection."""
+        conn.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
+        conn.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPIDLE, 2)
+        conn.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPINTVL, 1)
+        conn.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPCNT, 3)
 
 
-# ============================================================
-# Relay loop — drains one client connection, forwards to radio
-# ============================================================
-# CHANGED: signature was relay_loop(conn) using a module-global `rfd`;
-#          `rfd` is now passed in explicitly instead of being a global.
+# OPEN THE RADIO
+
 def relay_loop(conn, rfd):
-    buffer = b''   # CHANGED: this init was missing/misplaced in the on-Pi version —
-                   #          its absence caused "cannot access local variable 'buffer'"
-    while True:
-        chunk = conn.recv(256)
-        if not chunk:
-            print("[RELAY] ESP32 disconnected.")
-            break
-        buffer += chunk
+        buffer = b''
+        while True:
+                chunk = conn.recv(256)
+                if not chunk:
+                        print("[RELAY] ESP32 disconnected")
+                        break
+                buffer += chunk
 
-        # Process every complete packet at the front of the buffer
-        while len(buffer) >= PACKET_SIZE:
-            magic = struct.unpack('>H', buffer[:2])[0]
-            if magic != MAGIC:
-                buffer = buffer[1:]   # not aligned — resync one byte at a time
-                continue
+                # Pull every complete, valid packet out of the buffer. If several
+                # have piled up because the radio is falling behind at long range,
+                # keep only the NEWEST — stale telemetry is useless, and forwarding
+                # the whole backlog is exactly what lets a slow radio wedge the relay.
+                latest = None
+                while len(buffer) >= PACKET_SIZE:
+                        #check for magic at the start
+                        magic = struct.unpack('>H', buffer[:2])[0]
+                        if magic != MAGIC:
+                                # not aligned - drop one byte and resync
+                                buffer = buffer[1:]
+                                continue
+                        raw = buffer[:PACKET_SIZE]
+                        buffer = buffer[PACKET_SIZE:]
 
-            raw = buffer[:PACKET_SIZE]
-            buffer = buffer[PACKET_SIZE:]
+                        if not verify_checksum(raw):
+                                print(f"[RELAY] Bad Checksum - paket dropped.")
+                                continue
+                        latest = raw
 
-            if not verify_checksum(raw):
-                print("[RELAY] Bad checksum — packet dropped.")
-                continue
+                # Forward the freshest packet. The bounded write_timeout (set when
+                # the port is opened) means a saturated/blocked radio raises instead
+                # of blocking forever — we drop the frame and keep draining the
+                # socket, so the board's TCP connection never backs up and wedges.
+                if latest is not None:
+                        try:
+                                rfd.write(latest)
+                        except serial.SerialTimeoutException:
+                                print("[RELAY] Radio write timed out - frame dropped (link saturated / far away?)")
 
-            # Forward the validated packet over the radio
-            rfd.write(raw)
-
-            # Debug print
-            try:
-                _, seq, bv, ba, rpm, temp, spd, fault, _ = struct.unpack(PACKET_FORMAT, raw)
-                print(f"[PKT #{seq}] {bv:.1f}V {ba:.1f}A {rpm:.0f}RPM "
-                      f"{temp:.1f}C {spd:.1f}km/h fault={fault}")
-            except struct.error:
-                pass
-
-
-# ============================================================
-# Entry point
-# ============================================================
-# CHANGED: the radio-open and TCP-server setup used to run at module top level.
-#          Wrapped in main() so the radio opens BEFORE the server binds, and so
-#          an import never starts the server by accident.
+#TCP SERVER - wait for the ESP32, relay, reconnect on the drop
 def main():
-    print(f"[RELAY] Opening radio on {RFD_PORT} at {RFD_BAUD} baud...")
-    rfd = serial.Serial(RFD_PORT, baudrate=RFD_BAUD, timeout=1)
-    print("[RELAY] Radio ready.")
+        print(f"[RELAY] Opening Radio on {RFD_PORT} at {RFD_BAUD} baud  .... ")
+        # write_timeout bounds rfd.write() so a backed-up radio (serial flow
+        # control at long range) can't block the relay forever and wedge the
+        # board's TCP connection. On timeout pyserial raises SerialTimeoutException,
+        # which relay_loop catches and drops the frame.
+        rfd = serial.Serial(RFD_PORT, baudrate=RFD_BAUD, timeout=1, write_timeout=0.5)
+        print("[RELAY] Radio Ready.")
 
-    server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-    server.bind((LISTEN_HOST, LISTEN_PORT))
-    server.listen(1)
-    print(f"[RELAY] TCP server on port {LISTEN_PORT}. Waiting for ESP32...")
+        server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        server.bind((LISTEN_HOST, LISTEN_PORT))
+        server.listen(5)  # backlog >1 so a reconnect SYN isn't dropped while an old conn is torn down
+        print("[RELAY] Waiting for the ESP32 to connect ...")
 
-    while True:
-        conn = None   # CHANGED: init before the try so the finally below can't hit
-                      #          a NameError on conn if accept() itself fails
-        try:
-            conn, addr = server.accept()
-            print(f"[RELAY] ESP32 connected from {addr}")
-            relay_loop(conn, rfd)   # CHANGED: pass rfd explicitly (was a global)
-        except Exception as e:
-            print(f"[RELAY] Error: {e}")
-        finally:
-            if conn is not None:   # CHANGED: guard the close (conn may be None)
-                conn.close()
-            print("[RELAY] Waiting for ESP32 to reconnect...")
-            time.sleep(1)
+        while True:
+                conn =None
+                try:
+                        conn, addr = server.accept()
+                        enable_keepalive(conn)
+                        print(f"[RELAY] ESP32 connected from {addr}")
+                        relay_loop(conn, rfd)
+                except Exception as e:
+                        print(f"[RELAY] Error: {e}")
 
-
+                finally:
+                        if conn is not None:
+                                conn.close()
+                        print("[RELAY] Waiting for ESP32 to reconnect...")
+                        time.sleep(1)
 if __name__ == '__main__':
-    main()
+        main()

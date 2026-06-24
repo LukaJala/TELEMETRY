@@ -11,6 +11,7 @@
 #include <string.h>
 #include <stdint.h>
 #include <errno.h>
+#include <fcntl.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "esp_log.h"
@@ -59,7 +60,11 @@ static const char *TAG = "NETWORK";
 #define PI_PORT 5000
 #define PIT_MAGIC 0xA55A
 #define PIT_PACKET_SIZE 30
-#define PI_SEND_INTERVAL_MS 100 /* 10 Hz — steady cadence for the laptop's seq/loss math */
+#define PI_SEND_INTERVAL_MS 200 /* 5 Hz — low rate lets the RFD900X run a low AIR_SPEED for max range */
+#define PI_RECONNECT_DELAY_MS 250 /* short backoff between reconnect attempts so the board
+                                   * re-finds the Pi almost immediately after it drops */
+#define PI_CONNECT_TIMEOUT_MS 2000 /* bound each connect attempt so a blocking connect()
+                                    * can't stall on the full TCP SYN timeout at boot */
 
 /* CAN frame over TCP is exactly 14 bytes: [0x01 magic][CAN_ID 4B][DLC 1B][data 8B]
  * The 0x01 prefix distinguishes binary frames from text commands, which are always
@@ -457,18 +462,77 @@ static void build_packet(uint8_t out[PIT_PACKET_SIZE], uint32_t seq, const pit_t
     out[29] = (uint8_t)(sum);
 }
 
+/* Non-blocking connect bounded by a timeout. A plain blocking connect() to a
+ * same-subnet host that isn't answering yet (link still negotiating at boot, or
+ * the Pi still booting) stalls for the full TCP SYN timeout — many seconds —
+ * before failing. That makes the board look like it never connects. Bounding it
+ * lets the task retry promptly and latch onto the Pi the instant it appears. */
+static int pi_connect_bounded(int sock, const struct sockaddr_in *dest, int timeout_ms)
+{
+    int flags = fcntl(sock, F_GETFL, 0);
+    fcntl(sock, F_SETFL, flags | O_NONBLOCK);
+
+    int rc = connect(sock, (const struct sockaddr *)dest, sizeof(*dest));
+    if (rc == 0)
+    {
+        fcntl(sock, F_SETFL, flags);
+        return 0; /* connected immediately (rare on a non-blocking socket) */
+    }
+    if (errno != EINPROGRESS)
+    {
+        /* Hard failure — errno is meaningful (ECONNREFUSED, EHOSTUNREACH, ...) */
+        fcntl(sock, F_SETFL, flags);
+        return -1;
+    }
+
+    /* connect() is in progress: wait (bounded) for the socket to become writable */
+    fd_set wset;
+    FD_ZERO(&wset);
+    FD_SET(sock, &wset);
+    struct timeval tv = {.tv_sec = timeout_ms / 1000,
+                         .tv_usec = (timeout_ms % 1000) * 1000};
+    rc = select(sock + 1, NULL, &wset, NULL, &tv);
+    fcntl(sock, F_SETFL, flags); /* restore blocking mode for send() */
+
+    if (rc == 0)
+    {
+        /* SYN went unanswered within the timeout — peer not reachable (ARP/link),
+         * NOT a connection refusal. Report it as such instead of stale EINPROGRESS. */
+        errno = ETIMEDOUT;
+        return -1;
+    }
+    if (rc < 0)
+    {
+        return -1; /* select error — errno already set */
+    }
+
+    int err = 0;
+    socklen_t len = sizeof(err);
+    if (getsockopt(sock, SOL_SOCKET, SO_ERROR, &err, &len) < 0 || err != 0)
+    {
+        errno = err ? err : errno;
+        return -1;
+    }
+    return 0; /* connected */
+}
+
 /* Maintains the TCP connection to the Pi and streams packets at a fixed rate.
- * Reconnects on any failure; the Pi being down or rebooting is non-fatal. */
+ * Runs from boot, independent of any display/CAN traffic — it connects and keeps
+ * the link alive even when nothing is being broadcast. Reconnects on any
+ * failure; the Pi being down or rebooting is non-fatal. */
 static void pit_sender_task(void *pvParameters)
 {
     uint32_t seq = 0;
+
+    ESP_LOGI(TAG, "pit_sender started — will connect to Pi %s:%d at boot (independent of display traffic)",
+             PI_IP, PI_PORT);
 
     while (1)
     {
         int sock = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
         if (sock < 0)
         {
-            vTaskDelay(pdMS_TO_TICKS(2000));
+            vTaskDelay(pdMS_TO_TICKS(PI_RECONNECT_DELAY_MS));
             continue;
         }
 
@@ -478,13 +542,30 @@ static void pit_sender_task(void *pvParameters)
             .sin_addr.s_addr = esp_ip4addr_aton(PI_IP),
         };
 
-        if (connect(sock, (struct sockaddr *)&dest, sizeof(dest)) < 0)
+        if (pi_connect_bounded(sock, &dest, PI_CONNECT_TIMEOUT_MS) < 0)
         {
-            ESP_LOGW(TAG, "Pi connect %s:%d failed (errno=%d) — retrying", PI_IP, PI_PORT, errno);
+            ESP_LOGW(TAG, "Pi connect %s:%d failed (errno=%d) — retrying in %dms",
+                     PI_IP, PI_PORT, errno, PI_RECONNECT_DELAY_MS);
             close(sock);
-            vTaskDelay(pdMS_TO_TICKS(2000));
+            vTaskDelay(pdMS_TO_TICKS(PI_RECONNECT_DELAY_MS));
             continue;
         }
+        /* Disable Nagle's algorithm: each telemetry packet is a fixed 30 bytes
+         * sent on a fixed cadence, so there is never more data coming to batch
+         * with. Without this, TCP can hold each packet up to ~40ms waiting to
+         * coalesce — pure latency for a stream of small, self-contained packets. */
+        int nodelay = 1;
+        setsockopt(sock, IPPROTO_TCP, TCP_NODELAY, &nodelay, sizeof(nodelay));
+
+        /* Active liveness probing so an unclean drop (cable pull, Pi power loss
+         * — no FIN/RST) is detected in a few seconds and the socket errors out,
+         * kicking us back to the reconnect loop instead of wedging on a dead link. */
+        int ka_enable = 1, ka_idle = 2, ka_intvl = 1, ka_cnt = 3;
+        setsockopt(sock, SOL_SOCKET, SO_KEEPALIVE, &ka_enable, sizeof(ka_enable));
+        setsockopt(sock, IPPROTO_TCP, TCP_KEEPIDLE, &ka_idle, sizeof(ka_idle));
+        setsockopt(sock, IPPROTO_TCP, TCP_KEEPINTVL, &ka_intvl, sizeof(ka_intvl));
+        setsockopt(sock, IPPROTO_TCP, TCP_KEEPCNT, &ka_cnt, sizeof(ka_cnt));
+
         ESP_LOGI(TAG, "Connected to Pi %s:%d — streaming telemetry", PI_IP, PI_PORT);
 
         while (1)
@@ -596,7 +677,7 @@ esp_err_t network_init(network_data_callback_t data_cb,
     /* --------------------------------------------------------
      * Start the pit telemetry sender (TCP client → Pi)
      * -------------------------------------------------------- */
-    xTaskCreate(pit_sender_task, "pit_sender", 4096, NULL, 4, NULL);
+    xTaskCreate(pit_sender_task, "pit_sender", 4096, NULL, 6, NULL);
 
     /* --------------------------------------------------------
      * Start TCP server in a background task

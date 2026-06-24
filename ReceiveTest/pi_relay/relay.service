@@ -1,0 +1,33 @@
+[Unit]
+Description=Lysander telemetry relay (ESP32-P4 -> RFD900X)
+# Bring it up once the system is multi-user. relay.py binds to 0.0.0.0 and the
+# RFD900X is on a UART, so it does not need the network link to be "online"
+# first — it just listens and the board connects when it is ready.
+After=network.target
+Wants=network.target
+
+[Service]
+Type=simple
+
+# --- Adjust these three to match the Pi ---
+User=pi
+WorkingDirectory=/home/pi/relay
+ExecStart=/usr/bin/python3 /home/pi/relay/relay.py
+# ------------------------------------------
+
+# Auto-restart on any exit (crash, exception, or relay.py returning).
+Restart=always
+RestartSec=2
+
+# Flush print() immediately so `journalctl -u relay -f` shows logs live.
+Environment=PYTHONUNBUFFERED=1
+
+# The RFD900X is on /dev/serial0 — User must be in the 'dialout' group
+# (see install steps). SupplementaryGroups makes systemd add it regardless.
+SupplementaryGroups=dialout
+
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
