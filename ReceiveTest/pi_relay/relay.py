@@ -78,6 +78,18 @@ def relay_loop(conn, rfd):
                         break
                 buffer += chunk
 
+                # Heartbeat: echo a single byte for every chunk we receive. The
+                # ESP32 watches for this and reconnects fast if it stops (Pi power
+                # loss / relay crash leave no clean FIN/RST, so the board can't
+                # tell otherwise until the slow TCP retransmit timeout). Sent
+                # non-blocking and best-effort: if the board isn't draining it
+                # (e.g. older firmware) we drop the byte instead of letting it
+                # back up and block the relay. It never goes over the radio.
+                try:
+                        conn.send(b'\x00', socket.MSG_DONTWAIT)
+                except (BlockingIOError, OSError):
+                        pass
+
                 # Pull every complete, valid packet out of the buffer. If several
                 # have piled up because the radio is falling behind at long range,
                 # keep only the NEWEST — stale telemetry is useless, and forwarding

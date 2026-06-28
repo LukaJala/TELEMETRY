@@ -1,5 +1,6 @@
 #pragma once
 #include <stdint.h>
+#include <stdbool.h>
 #include "lvgl.h"
 #include "display_can_spec.h"
 
@@ -21,3 +22,8 @@ void ui_set_status(const char *status);
 
 /* Switch the right-panel tab: 0=BATTERY, 1=SOLAR/MOTOR, 2=GPS/TRIP */
 void ui_set_tab(uint8_t tab_index);
+
+/* Update the Pi telemetry-link indicator (bottom-left). Safe to call from any
+ * task and at any rate: it de-dupes internally and skips the update (to retry
+ * later) if the LVGL lock is held, e.g. while the camera is streaming. */
+void ui_set_pi_status(bool connected);

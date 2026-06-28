@@ -5,10 +5,12 @@
 #pragma once
 
 #include <stdint.h>
+#include <stdbool.h>
 #include "esp_err.h"
 
 /* Callback function type - called when data is received.
- * For binary CAN frames, data is a raw 13-byte buffer (not null-terminated).
+ * For binary CAN frames, data is a raw 14-byte buffer (not null-terminated):
+ * [0x01 magic][CAN_ID 4B LE][DLC 1B][payload 8B].
  * For text commands, data is null-terminated and length reflects string length. */
 typedef void (*network_data_callback_t)(const uint8_t *data, int length);
 
@@ -41,3 +43,7 @@ void network_set_telemetry(const pit_telemetry_t *t);
 
 /* Get our IP address as a string (for display) */
 const char *network_get_ip(void);
+
+/* True while the board has a live, streaming telemetry connection to the Pi
+ * (relay.py). Poll this for a connection indicator on the dashboard. */
+bool network_pi_is_connected(void);

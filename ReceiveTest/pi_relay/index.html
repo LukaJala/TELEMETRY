@@ -1,0 +1,435 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Solar Car Telemetry</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg:        #0a0e1a;
+    --surface:   #111827;
+    --surface2:  #1a2235;
+    --border:    #1e2d45;
+    --text:      #e2e8f0;
+    --muted:     #64748b;
+    --blue:      #3b82f6;
+    --green:     #22c55e;
+    --yellow:    #eab308;
+    --red:       #ef4444;
+    --orange:    #f97316;
+    --purple:    #a855f7;
+    --teal:      #14b8a6;
+  }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'Segoe UI', system-ui, sans-serif;
+    min-height: 100vh;
+  }
+
+  /* ── Header ───────────────────────────────────────────── */
+  header {
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    padding: 14px 24px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    position: sticky;
+    top: 0;
+    z-index: 100;
+  }
+  .header-left { display: flex; align-items: center; gap: 14px; }
+  .logo {
+    width: 38px; height: 38px;
+    background: linear-gradient(135deg, #f97316, #eab308);
+    border-radius: 9px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 20px;
+  }
+  header h1 { font-size: 16px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; }
+  header p { font-size: 12px; color: var(--muted); }
+
+  .header-right { display: flex; align-items: center; gap: 16px; }
+  .clock { font-size: 14px; color: var(--muted); font-variant-numeric: tabular-nums; }
+  .status-pill {
+    display: flex; align-items: center; gap: 8px;
+    background: var(--surface2); border: 1px solid var(--border);
+    border-radius: 999px; padding: 6px 14px; font-size: 13px;
+  }
+  .status-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--red); transition: background .3s; }
+  .status-dot.connected { background: var(--green); animation: pulse 2s infinite; }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.4} }
+
+  /* ── Alerts bar ───────────────────────────────────────── */
+  #alerts-bar {
+    display: none; background: #3b1500; border-bottom: 1px solid #7c2d12;
+    padding: 10px 24px; font-size: 13px; color: #fb923c; gap: 16px; flex-wrap: wrap;
+  }
+  #alerts-bar.visible { display: flex; }
+  .alert-item::before { content: '\26a0  '; }
+
+  /* ── Layout ───────────────────────────────────────────── */
+  main { padding: 20px 24px; max-width: 1400px; margin: 0 auto; }
+
+  /* Hero row: big speed + key stats */
+  .hero {
+    display: grid;
+    grid-template-columns: 1.2fr 1fr 1fr;
+    gap: 16px;
+    margin-bottom: 16px;
+  }
+  @media (max-width: 900px){ .hero { grid-template-columns: 1fr; } }
+
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 20px;
+    position: relative;
+    overflow: hidden;
+    transition: border-color .3s;
+  }
+  .card.warn  { border-color: var(--yellow); }
+  .card.alert { border-color: var(--red); }
+  .card-accent { position: absolute; top: 0; left: 0; width: 4px; height: 100%; border-radius: 14px 0 0 14px; }
+  .card-label {
+    font-size: 11px; font-weight: 600; text-transform: uppercase;
+    letter-spacing: .1em; color: var(--muted); margin-bottom: 8px; padding-left: 12px;
+  }
+  .card-value {
+    font-size: 42px; font-weight: 700; line-height: 1; padding-left: 12px;
+    font-variant-numeric: tabular-nums; transition: color .3s;
+  }
+  .card-unit { font-size: 18px; font-weight: 400; color: var(--muted); margin-left: 4px; }
+  .card-sub { font-size: 12px; color: var(--muted); margin-top: 6px; padding-left: 12px; }
+  .sparkline { margin-top: 14px; width: 100%; height: 46px; display: block; }
+
+  /* Big speedometer card */
+  .speedo { display: flex; flex-direction: column; justify-content: center; align-items: center; text-align: center; }
+  .speedo .big {
+    font-size: 96px; font-weight: 800; line-height: 1;
+    font-variant-numeric: tabular-nums; color: var(--blue);
+    transition: color .3s;
+  }
+  .speedo .big-unit { font-size: 22px; color: var(--muted); font-weight: 500; letter-spacing: .15em; }
+  .speedo .gear { font-size: 14px; color: var(--muted); margin-top: 6px; }
+
+  /* Grid of smaller metric cards */
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+    gap: 16px;
+  }
+
+  /* fault card */
+  .card-fault .card-value { font-size: 20px; font-weight: 600; line-height: 1.4; word-break: break-word; }
+  .card-fault.ok .card-value { color: var(--green); }
+  .card-fault.fault .card-value { color: var(--red); }
+
+  /* link quality bar */
+  .quality-bar-bg { margin-top: 14px; background: var(--surface2); border-radius: 999px; height: 8px; overflow: hidden; }
+  .quality-bar-fill { height: 100%; border-radius: 999px; background: var(--green); transition: width .5s, background .3s; }
+
+  /* stat rows */
+  .stat-row { display: flex; justify-content: space-between; align-items: center; padding: 8px 0; border-bottom: 1px solid var(--border); font-size: 14px; }
+  .stat-row:last-child { border-bottom: none; }
+  .stat-row span:last-child { font-weight: 600; font-variant-numeric: tabular-nums; }
+
+  footer { text-align: center; padding: 16px; font-size: 12px; color: var(--muted); border-top: 1px solid var(--border); margin-top: 8px; }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="header-left">
+    <div>
+      <h1>Solar Car Telemetry</h1>
+      <p>Ground Station Display</p>
+    </div>
+  </div>
+  <div class="header-right">
+    <div class="clock" id="clock">--:--:--</div>
+    <div class="status-pill">
+      <div class="status-dot" id="status-dot"></div>
+      <span id="status-text">Connecting...</span>
+    </div>
+  </div>
+</header>
+
+<div id="alerts-bar"></div>
+
+<main>
+
+  <!-- HERO ROW -->
+  <div class="hero">
+    <!-- Big speedometer -->
+    <div class="card speedo" id="card-speed">
+      <div class="card-accent" style="background: var(--blue)"></div>
+      <div class="card-label" style="align-self:flex-start">Vehicle Speed</div>
+      <div class="big" id="val-speed">0.0</div>
+      <div class="big-unit">MPH</div>
+      <div class="gear" id="speed-sub">Motor: 0 RPM</div>
+    </div>
+
+    <!-- Battery voltage -->
+    <div class="card" id="card-batt-v">
+      <div class="card-accent" style="background: var(--green)"></div>
+      <div class="card-label">Battery Voltage</div>
+      <div class="card-value" id="val-batt-v">--<span class="card-unit">V</span></div>
+      <div class="card-sub" id="sub-batt-v">Power: 0.00 kW</div>
+      <canvas class="sparkline" id="spark-batt-v"></canvas>
+    </div>
+
+    <!-- Battery current -->
+    <div class="card" id="card-batt-a">
+      <div class="card-accent" style="background: var(--teal)"></div>
+      <div class="card-label">Battery Current</div>
+      <div class="card-value" id="val-batt-a">--<span class="card-unit">A</span></div>
+      <div class="card-sub" id="sub-batt-a">Waiting...</div>
+      <canvas class="sparkline" id="spark-batt-a"></canvas>
+    </div>
+  </div>
+
+  <!-- METRIC GRID -->
+  <div class="grid">
+
+    <!-- Motor RPM -->
+    <div class="card" id="card-rpm">
+      <div class="card-accent" style="background: var(--purple)"></div>
+      <div class="card-label">Motor RPM</div>
+      <div class="card-value" id="val-rpm">--<span class="card-unit">RPM</span></div>
+      <div class="card-sub" id="sub-rpm">Speed: 0.0 mph</div>
+      <canvas class="sparkline" id="spark-rpm"></canvas>
+    </div>
+
+    <!-- Temperature -->
+    <div class="card" id="card-temp">
+      <div class="card-accent" style="background: var(--orange)"></div>
+      <div class="card-label">Temperature</div>
+      <div class="card-value" id="val-temp">--<span class="card-unit">\u00b0C</span></div>
+      <div class="card-sub" id="sub-temp">Normal range</div>
+      <canvas class="sparkline" id="spark-temp"></canvas>
+    </div>
+
+    <!-- System status / faults -->
+    <div class="card card-fault ok" id="card-fault">
+      <div class="card-accent" style="background: var(--green)" id="fault-accent"></div>
+      <div class="card-label">System Status</div>
+      <div class="card-value" id="val-fault">Waiting...</div>
+      <div class="card-sub" id="sub-fault">No fault data yet</div>
+    </div>
+
+    <!-- Link quality -->
+    <div class="card" id="card-quality">
+      <div class="card-accent" style="background: var(--blue)"></div>
+      <div class="card-label">Link Quality</div>
+      <div class="card-value" id="val-quality">--%</div>
+      <div class="quality-bar-bg"><div class="quality-bar-fill" id="quality-bar" style="width:0%"></div></div>
+      <div class="card-sub" id="sub-quality">Waiting...</div>
+    </div>
+
+    <!-- Session stats -->
+    <div class="card" id="card-session">
+      <div class="card-accent" style="background: var(--yellow)"></div>
+      <div class="card-label">Session Peaks</div>
+      <div class="stat-row"><span>Top speed</span><span id="stat-maxspeed">0.0 mph</span></div>
+      <div class="stat-row"><span>Max temp</span><span id="stat-maxtemp">0.0 \u00b0C</span></div>
+      <div class="stat-row"><span>Peak power</span><span id="stat-power">0.00 kW</span></div>
+    </div>
+
+    <!-- Packet stats -->
+    <div class="card" id="card-packets">
+      <div class="card-accent" style="background: var(--muted)"></div>
+      <div class="card-label">Packet Statistics</div>
+      <div class="stat-row"><span>Received</span><span id="stat-received">0</span></div>
+      <div class="stat-row"><span>Lost</span><span id="stat-lost" style="color: var(--red)">0</span></div>
+      <div class="stat-row"><span>Last sequence</span><span id="stat-seq">\u2014</span></div>
+      <div class="stat-row"><span>Last packet</span><span id="stat-time">\u2014</span></div>
+    </div>
+
+  </div>
+</main>
+
+<footer>
+  Solar Car Telemetry Ground Station &nbsp;\u00b7&nbsp; Live data via RFD900X radio link
+</footer>
+
+<script>
+const COLORS = {
+  'batt-v': '#22c55e', 'batt-a': '#14b8a6',
+  'rpm': '#a855f7', 'temp': '#f97316', 'speed': '#3b82f6'
+};
+
+function drawSparkline(canvasId, data, color) {
+  const canvas = document.getElementById(canvasId);
+  if (!canvas || data.length < 2) return;
+  const ctx = canvas.getContext('2d');
+  const W = canvas.offsetWidth || 240;
+  const H = canvas.height = 46;
+  canvas.width = W;
+  ctx.clearRect(0, 0, W, H);
+  const min = Math.min(...data), max = Math.max(...data);
+  const range = max - min || 1;
+  const grad = ctx.createLinearGradient(0, 0, 0, H);
+  grad.addColorStop(0, color + '44');
+  grad.addColorStop(1, color + '00');
+  ctx.beginPath();
+  data.forEach((v, i) => {
+    const x = (i / (data.length - 1)) * W;
+    const y = H - ((v - min) / range) * (H - 6) - 2;
+    i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+  });
+  ctx.lineTo(W, H); ctx.lineTo(0, H); ctx.closePath();
+  ctx.fillStyle = grad; ctx.fill();
+  ctx.beginPath();
+  data.forEach((v, i) => {
+    const x = (i / (data.length - 1)) * W;
+    const y = H - ((v - min) / range) * (H - 6) - 2;
+    i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+  });
+  ctx.strokeStyle = color; ctx.lineWidth = 2; ctx.lineJoin = 'round'; ctx.stroke();
+}
+
+const THRESHOLDS = {
+  battery_v:   { min: 30,  max: 90 },
+  battery_a:   { min: -10, max: 60 },
+  rpm:         { min: 0,   max: 5000 },
+  temperature: { min: -10, max: 60 },
+  speed:       { min: 0,   max: 80 },
+};
+
+function getStatus(field, value) {
+  const t = THRESHOLDS[field];
+  if (!t) return 'ok';
+  const margin = (t.max - t.min) * 0.1;
+  if (value < t.min || value > t.max) return 'alert';
+  if (value < t.min + margin || value > t.max - margin) return 'warn';
+  return 'ok';
+}
+function statusColor(s) { return { ok:'#22c55e', warn:'#eab308', alert:'#ef4444' }[s] || '#64748b'; }
+
+function updateCard(cardId, valueId, subId, value, unit, field, subText) {
+  const card = document.getElementById(cardId);
+  const valEl = document.getElementById(valueId);
+  const subEl = document.getElementById(subId);
+  const status = getStatus(field, value);
+  card.className = 'card ' + (status !== 'ok' ? status : '');
+  valEl.style.color = statusColor(status);
+  valEl.innerHTML = `${value}<span class="card-unit">${unit}</span>`;
+  if (subEl && subText) subEl.textContent = subText;
+}
+
+function timeAgo(ts) {
+  if (!ts) return '\u2014';
+  const secs = Math.round(Date.now()/1000 - ts);
+  if (secs < 2) return 'just now';
+  if (secs < 60) return `${secs}s ago`;
+  return `${Math.round(secs/60)}m ago`;
+}
+
+function applyData(d) {
+  // connection
+  const dot = document.getElementById('status-dot');
+  const stxt = document.getElementById('status-text');
+  if (d.connected) { dot.className = 'status-dot connected'; stxt.textContent = 'Live'; }
+  else { dot.className = 'status-dot'; stxt.textContent = 'Disconnected'; }
+
+  // alerts
+  const bar = document.getElementById('alerts-bar');
+  if (d.alerts && d.alerts.length) {
+    bar.className = 'visible';
+    bar.innerHTML = d.alerts.map(a => `<span class="alert-item">${a}</span>`).join('');
+  } else { bar.className = ''; bar.innerHTML = ''; }
+
+  // big speed (MPH)
+  if (d.speed !== undefined) {
+    const speedStatus = getStatus('speed', d.speed);
+    const speedEl = document.getElementById('val-speed');
+    speedEl.textContent = d.speed.toFixed(1);
+    speedEl.style.color = statusColor(speedStatus);
+    document.getElementById('card-speed').className = 'card speedo ' + (speedStatus !== 'ok' ? speedStatus : '');
+    document.getElementById('speed-sub').textContent = `Motor: ${(d.rpm||0).toFixed(0)} RPM`;
+  }
+
+  // battery voltage
+  if (d.battery_v !== undefined)
+    updateCard('card-batt-v','val-batt-v','sub-batt-v', d.battery_v.toFixed(2),'V','battery_v',
+      `Power: ${(d.power_kw||0).toFixed(2)} kW`);
+
+  // battery current
+  if (d.battery_a !== undefined)
+    updateCard('card-batt-a','val-batt-a','sub-batt-a', d.battery_a.toFixed(1),'A','battery_a',
+      d.battery_a >= 0 ? 'Discharging' : 'Regenerating');
+
+  // rpm
+  if (d.rpm !== undefined)
+    updateCard('card-rpm','val-rpm','sub-rpm', d.rpm.toFixed(0),'RPM','rpm',
+      `Speed: ${(d.speed||0).toFixed(1)} mph`);
+
+  // temperature
+  if (d.temperature !== undefined)
+    updateCard('card-temp','val-temp','sub-temp', d.temperature.toFixed(1),'\u00b0C','temperature',
+      d.temperature > 50 ? '\u26a0 High temperature' : 'Normal range');
+
+  // fault
+  if (d.fault_code !== undefined) {
+    const fc = document.getElementById('card-fault');
+    const fv = document.getElementById('val-fault');
+    const fs = document.getElementById('sub-fault');
+    const fa = document.getElementById('fault-accent');
+    const isFault = d.fault_code !== 0;
+    fc.className = 'card card-fault ' + (isFault ? 'fault' : 'ok');
+    fv.textContent = d.fault_text || 'OK';
+    fs.textContent = isFault ? `Code: 0x${d.fault_code.toString(16).toUpperCase().padStart(4,'0')}` : 'All systems nominal';
+    fa.style.background = isFault ? 'var(--red)' : 'var(--green)';
+  }
+
+  // link quality
+  if (d.link_quality !== undefined) {
+    const q = d.link_quality;
+    document.getElementById('val-quality').textContent = q.toFixed(1) + '%';
+    const qb = document.getElementById('quality-bar');
+    qb.style.width = q + '%';
+    qb.style.background = q > 80 ? 'var(--green)' : q > 50 ? 'var(--yellow)' : 'var(--red)';
+    document.getElementById('sub-quality').textContent = `${d.packets_received||0} received, ${d.packets_lost||0} lost`;
+  }
+
+  // session peaks
+  if (d.max_speed !== undefined) document.getElementById('stat-maxspeed').textContent = d.max_speed.toFixed(1) + ' mph';
+  if (d.max_temp !== undefined) document.getElementById('stat-maxtemp').textContent = d.max_temp.toFixed(1) + ' \u00b0C';
+  if (d.power_kw !== undefined) document.getElementById('stat-power').textContent = (d.power_kw||0).toFixed(2) + ' kW';
+
+  // packet stats
+  if (d.packets_received !== undefined) document.getElementById('stat-received').textContent = d.packets_received;
+  if (d.packets_lost !== undefined) document.getElementById('stat-lost').textContent = d.packets_lost;
+  if (d.seq !== undefined) document.getElementById('stat-seq').textContent = d.seq;
+  document.getElementById('stat-time').textContent = timeAgo(d.last_packet_time);
+
+  // sparklines
+  if (d.history) {
+    drawSparkline('spark-batt-v', d.history.battery_v, COLORS['batt-v']);
+    drawSparkline('spark-batt-a', d.history.battery_a, COLORS['batt-a']);
+    drawSparkline('spark-rpm', d.history.rpm, COLORS['rpm']);
+    drawSparkline('spark-temp', d.history.temperature, COLORS['temp']);
+  }
+}
+
+function connectStream() {
+  const es = new EventSource('/stream');
+  es.onmessage = (e) => { try { applyData(JSON.parse(e.data)); } catch(err){ console.error(err); } };
+  es.onerror = () => { es.close(); setTimeout(connectStream, 3000); };
+}
+
+// live clock
+setInterval(() => {
+  document.getElementById('clock').textContent = new Date().toLocaleTimeString();
+}, 1000);
+
+connectStream();
+</script>
+</body>
+</html>

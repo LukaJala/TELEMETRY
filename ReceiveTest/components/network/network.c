@@ -2,7 +2,8 @@
  * network.c
  * Ethernet initialization with static IP + TCP server
  *
- * Static IP: 192.168.1.100
+ * IP101 (native) : 192.168.2.100  — receives CAN frames from Vega (TCP server :5000)
+ * W5500 (SPI)    : 192.168.77.1   — streams pit telemetry to the Pi (TCP client)
  * TCP Port: 5000
  */
 
@@ -10,12 +11,14 @@
 
 #include <string.h>
 #include <stdint.h>
+#include <stdbool.h>
 #include <errno.h>
 #include <fcntl.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "esp_log.h"
 #include "esp_timer.h"
+#include "esp_mac.h"
 #include "esp_event.h"
 #include "esp_netif.h"
 #include "esp_eth.h"
@@ -31,14 +34,18 @@ static const char *TAG = "NETWORK";
 /* ============================================================
  * CONFIGURATION - Change these if needed
  * ============================================================ */
-#define STATIC_IP "192.168.77.1"     /* ESP32 IP on IP101 (native) port — direct Pi link */
-#define STATIC_GATEWAY "192.168.77.2" /* Pi dongle is the only peer on this link */
+#define STATIC_IP "192.168.2.100"    /* ESP32 IP on IP101 (native) port — receives CAN from Vega.
+                                      * Vega's W5500 is the TCP client at 192.168.2.50 dialing
+                                      * this address:5000. The IP101 PHY has Auto-MDIX, so a plain
+                                      * straight cable links to Vega's W5500 (which has none). */
+#define STATIC_GATEWAY "192.168.2.1" /* no router on this link; gateway unused for on-link Vega */
 #define STATIC_NETMASK "255.255.255.0"
 #define TCP_PORT 5000
 
-/* W5500 SPI Ethernet (second interface) */
-#define W5500_STATIC_IP "192.168.2.100"
-#define W5500_GATEWAY "192.168.2.1" /* Laptop IP on W5500 side */
+/* W5500 SPI Ethernet (second interface) — carries pit telemetry out to the Pi.
+ * The Pi's USB-Ethernet dongle has Auto-MDIX, so a straight cable links to the W5500. */
+#define W5500_STATIC_IP "192.168.77.1"
+#define W5500_GATEWAY "192.168.77.2" /* the Pi dongle (TCP server we stream to) */
 
 #define W5500_MOSI_GPIO 23
 #define W5500_MISO_GPIO 22
@@ -50,7 +57,7 @@ static const char *TAG = "NETWORK";
 #define W5500_SPI_MHZ 8
 
 /* Pit telemetry → Raspberry Pi Zero 2 W (runs relay.py) reached via its
- * USB-Ethernet adapter on the P4's NATIVE port. The Pi is a TCP SERVER on
+ * USB-Ethernet adapter on the P4's W5500 SPI port. The Pi is a TCP SERVER on
  * port 5000; we connect to it as a client and stream a fixed 30-byte packet
  * that relay.py + the laptop's server.py already expect:
  *   '>H I f f f f f H H'  =
@@ -65,6 +72,17 @@ static const char *TAG = "NETWORK";
                                    * re-finds the Pi almost immediately after it drops */
 #define PI_CONNECT_TIMEOUT_MS 2000 /* bound each connect attempt so a blocking connect()
                                     * can't stall on the full TCP SYN timeout at boot */
+#define PI_SEND_TIMEOUT_MS 1500 /* SO_SNDTIMEO: while streaming there is always unacked
+                                 * data in flight, which SUPPRESSES TCP keepalive, so a
+                                 * dead peer would otherwise only surface after the full
+                                 * retransmit chain (tens of seconds). Bounding send()
+                                 * guarantees the loop regains control and can reconnect. */
+#define PI_LIVENESS_TIMEOUT_MS 2000 /* relay.py echoes a heartbeat byte for every packet it
+                                     * receives; if none arrives for this long the Pi is
+                                     * assumed dead and the link is torn down + reconnected.
+                                     * Detects a silently-dead Pi in ~2s regardless of TCP
+                                     * retransmit/keepalive timing — the main fast-reconnect
+                                     * path when the Pi power-cycles. */
 
 /* CAN frame over TCP is exactly 14 bytes: [0x01 magic][CAN_ID 4B][DLC 1B][data 8B]
  * The 0x01 prefix distinguishes binary frames from text commands, which are always
@@ -96,11 +114,23 @@ static network_connect_callback_t connect_callback = NULL;
 static network_disconnect_callback_t disconnect_callback = NULL;
 static esp_netif_t *eth_netif = NULL;
 
+/* Per-interface driver handles, saved so the shared Ethernet event handler can
+ * tell which physical link an event came from and label it VEGA vs PI:
+ *   IP101 native port -> VEGA (receives CAN; 192.168.2.100 server)
+ *   W5500 SPI module  -> PI   (streams telemetry; 192.168.77.1 client) */
+static esp_eth_handle_t s_eth_handle_ip101 = NULL; /* VEGA-facing */
+static esp_eth_handle_t s_eth_handle_w5500 = NULL; /* PI-facing  */
+
 /* Latest telemetry snapshot, written by network_set_telemetry() (CAN task)
  * and read by the pit sender task. Guarded by a lightweight spinlock since
  * the copy is tiny. */
 static pit_telemetry_t pit_latest;
 static portMUX_TYPE pit_mux = portMUX_INITIALIZER_UNLOCKED;
+
+/* True while the pit sender holds a live, streaming TCP connection to the Pi.
+ * Single-writer (pit_sender_task), polled by the UI via network_pi_is_connected().
+ * volatile so the poller always observes the latest value. */
+static volatile bool s_pi_connected = false;
 
 /* ============================================================
  * ETHERNET EVENT HANDLER
@@ -109,19 +139,28 @@ static portMUX_TYPE pit_mux = portMUX_INITIALIZER_UNLOCKED;
 static void eth_event_handler(void *arg, esp_event_base_t event_base,
                               int32_t event_id, void *event_data)
 {
+    /* Both interfaces share this handler. Identify which one fired so the monitor
+     * says plainly VEGA (the IP101 link to Vega) vs PI (the W5500 link to the Pi). */
+    esp_eth_handle_t eth = (event_data != NULL) ? *(esp_eth_handle_t *)event_data : NULL;
+    const char *who = "ETH";
+    if (eth == s_eth_handle_ip101)
+        who = "VEGA link (IP101)";
+    else if (eth == s_eth_handle_w5500)
+        who = "PI link (W5500)";
+
     switch (event_id)
     {
     case ETHERNET_EVENT_CONNECTED:
-        ESP_LOGI(TAG, "Ethernet cable connected");
+        ESP_LOGI(TAG, "%s: cable connected (link UP)", who);
         break;
     case ETHERNET_EVENT_DISCONNECTED:
-        ESP_LOGW(TAG, "Ethernet cable disconnected");
+        ESP_LOGW(TAG, "%s: cable DISCONNECTED (link down)", who);
         break;
     case ETHERNET_EVENT_START:
-        ESP_LOGI(TAG, "Ethernet started");
+        ESP_LOGI(TAG, "%s: started", who);
         break;
     case ETHERNET_EVENT_STOP:
-        ESP_LOGI(TAG, "Ethernet stopped");
+        ESP_LOGI(TAG, "%s: stopped", who);
         break;
     default:
         break;
@@ -139,11 +178,20 @@ static void ip_event_handler(void *arg, esp_event_base_t event_base,
     {
         ip_event_got_ip_t *event = (ip_event_got_ip_t *)event_data;
 
-        /* Convert IP to string and save it */
-        snprintf(ip_address_str, sizeof(ip_address_str), IPSTR,
-                 IP2STR(&event->ip_info.ip));
+        char ipbuf[16];
+        snprintf(ipbuf, sizeof(ipbuf), IPSTR, IP2STR(&event->ip_info.ip));
 
-        ESP_LOGI(TAG, "Got IP address: %s", ip_address_str);
+        /* Only the IP101 (VEGA-facing) address is shown on the dashboard; don't let
+         * the W5500/PI interface clobber it when it also gets its static IP. */
+        if (event->esp_netif == eth_netif)
+        {
+            strncpy(ip_address_str, ipbuf, sizeof(ip_address_str));
+            ESP_LOGI(TAG, "VEGA link (IP101) got IP: %s", ipbuf);
+        }
+        else
+        {
+            ESP_LOGI(TAG, "PI link (W5500) got IP: %s", ipbuf);
+        }
     }
 }
 
@@ -151,14 +199,13 @@ static void ip_event_handler(void *arg, esp_event_base_t event_base,
  * TCP SERVER TASK
  * Runs in background, accepts connections, receives data.
  *
- * Frame dispatch logic:
+ * Frame dispatch logic (see CAN_FRAME_MAGIC / CAN_FRAME_SIZE):
  *   - Bytes accumulate in a local buffer.
- *   - If first byte of an accumulated chunk is NOT 0x00, treat the whole
- *     chunk as a null-terminated text command (e.g. __CAM_START__).
- *     All CAN IDs in the spec have 0x00 as their little-endian LSB,
- *     whereas text commands start with printable ASCII (>= 0x20).
- *   - Otherwise consume 13-byte CAN frames from the front of the buffer
- *     one at a time and dispatch each to the callback.
+ *   - If the leading byte is 0x01 (CAN_FRAME_MAGIC), consume one 14-byte
+ *     binary CAN frame from the front: [0x01][CAN_ID 4B][DLC 1B][data 8B].
+ *   - If the leading byte is printable ASCII (>= 0x20), treat the front of
+ *     the buffer as a null-terminated text command (e.g. __CAM_START__).
+ *   - Any other leading byte is framing noise: drop one byte and resync.
  * ============================================================ */
 static void tcp_server_task(void *pvParameters)
 {
@@ -170,7 +217,7 @@ static void tcp_server_task(void *pvParameters)
     struct sockaddr_in server_addr, client_addr;
     socklen_t addr_len = sizeof(client_addr);
 
-    ESP_LOGI(TAG, "Starting TCP server on port %d", TCP_PORT);
+    ESP_LOGI(TAG, "Starting VEGA server (IP101) on port %d", TCP_PORT);
 
     listen_sock = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
     if (listen_sock < 0)
@@ -203,20 +250,23 @@ static void tcp_server_task(void *pvParameters)
         return;
     }
 
-    ESP_LOGI(TAG, "TCP server listening on %s:%d", ip_address_str, TCP_PORT);
+    ESP_LOGI(TAG, "VEGA server listening on %s:%d — waiting for Vega @ 192.168.2.50", ip_address_str, TCP_PORT);
 
     while (1)
     {
-        ESP_LOGI(TAG, "Waiting for client connection...");
+        ESP_LOGI(TAG, "Waiting for VEGA to connect...");
 
         client_sock = accept(listen_sock, (struct sockaddr *)&client_addr, &addr_len);
         if (client_sock < 0)
         {
-            ESP_LOGE(TAG, "Failed to accept connection");
+            /* Brief pause so a persistent accept() failure can't spin the task at
+             * 100% CPU and flood the log. */
+            ESP_LOGE(TAG, "Failed to accept connection (errno=%d)", errno);
+            vTaskDelay(pdMS_TO_TICKS(100));
             continue;
         }
 
-        ESP_LOGI(TAG, "Client connected from %s", inet_ntoa(client_addr.sin_addr));
+        ESP_LOGI(TAG, "VEGA CONNECTED from %s", inet_ntoa(client_addr.sin_addr));
         accum_len = 0;
 
         /* --- Dead-peer detection ---
@@ -244,7 +294,7 @@ static void tcp_server_task(void *pvParameters)
 
             if (len == 0)
             {
-                ESP_LOGI(TAG, "Client disconnected");
+                ESP_LOGI(TAG, "VEGA disconnected");
                 break;
             }
             if (len < 0)
@@ -339,13 +389,20 @@ static void tcp_server_task(void *pvParameters)
 
 /* ============================================================
  * W5500 SPI ETHERNET INITIALIZATION
- * Second network interface — laptop connects via W5500 RJ45
- * ESP32 IP on this interface: 192.168.2.100
- * Set laptop's W5500-side Ethernet adapter to 192.168.2.1
+ * Second network interface — streams pit telemetry out to the Pi.
+ * ESP32 IP on this interface: 192.168.77.1
+ * Pi (relay.py TCP server) is at 192.168.77.2 on its USB-Ethernet dongle.
  * ============================================================ */
 static esp_err_t init_w5500(void)
 {
-    gpio_install_isr_service(0);
+    /* The GPIO ISR service (needed for the W5500 INT line) may already be
+     * installed by another driver — ESP_ERR_INVALID_STATE just means "already
+     * there" and is fine. Only a genuine failure is worth a warning. */
+    esp_err_t err = gpio_install_isr_service(0);
+    if (err != ESP_OK && err != ESP_ERR_INVALID_STATE)
+    {
+        ESP_LOGW(TAG, "GPIO ISR service install failed (0x%x) — W5500 INT may not work", err);
+    }
 
     spi_bus_config_t buscfg = {
         .mosi_io_num = W5500_MOSI_GPIO,
@@ -354,7 +411,14 @@ static esp_err_t init_w5500(void)
         .quadwp_io_num = -1,
         .quadhd_io_num = -1,
     };
-    ESP_ERROR_CHECK(spi_bus_initialize(W5500_SPI_HOST, &buscfg, SPI_DMA_CH_AUTO));
+    /* Graceful, not ESP_ERROR_CHECK: a SPI failure must NOT bootloop the device —
+     * the whole point of this path is to degrade to "IP101 only". */
+    err = spi_bus_initialize(W5500_SPI_HOST, &buscfg, SPI_DMA_CH_AUTO);
+    if (err != ESP_OK)
+    {
+        ESP_LOGW(TAG, "W5500 SPI bus init failed (0x%x) — running on IP101 only", err);
+        return err;
+    }
 
     spi_device_interface_config_t devcfg = {
         .command_bits = 16,
@@ -374,15 +438,54 @@ static esp_err_t init_w5500(void)
 
     esp_eth_mac_t *mac = esp_eth_mac_new_w5500(&w5500_cfg, &mac_cfg);
     esp_eth_phy_t *phy = esp_eth_phy_new_w5500(&phy_cfg);
+    if (mac == NULL || phy == NULL)
+    {
+        ESP_LOGW(TAG, "W5500 MAC/PHY alloc failed — running on IP101 only");
+        if (mac)
+            mac->del(mac);
+        if (phy)
+            phy->del(phy);
+        spi_bus_free(W5500_SPI_HOST);
+        return ESP_ERR_NO_MEM;
+    }
 
     esp_eth_config_t eth_cfg = ETH_DEFAULT_CONFIG(mac, phy);
     esp_eth_handle_t eth_handle = NULL;
-    esp_err_t err = esp_eth_driver_install(&eth_cfg, &eth_handle);
+    /* This is the real "is the chip there?" probe — it reads the W5500 version
+     * register, so an unwired/unpowered chip fails here. Non-fatal: free what we
+     * allocated and fall back to IP101. */
+    err = esp_eth_driver_install(&eth_cfg, &eth_handle);
     if (err != ESP_OK)
     {
-        ESP_LOGE(TAG, "W5500 init failed (0x%x) — check wiring. IP101 still active.", err);
+        ESP_LOGW(TAG, "PI LINK (W5500) not detected (0x%x) — Pi telemetry off; VEGA/display unaffected", err);
         esp_log_level_set("w5500.mac", ESP_LOG_NONE);
+        mac->del(mac);
+        phy->del(phy);
+        spi_bus_free(W5500_SPI_HOST);
         return err;
+    }
+    s_eth_handle_w5500 = eth_handle; /* PI-facing handle, for the event handler's labeling */
+
+    /* Program a MAC address. Unlike the internal EMAC (which gets one from efuse),
+     * the SPI W5500 powers up as 00:00:00:00:00:00 — an invalid all-zero MAC that
+     * breaks ARP: the Pi (or its dongle) won't answer ARP from an all-zero sender,
+     * so the outbound connect to the Pi never resolves. Derive a stable,
+     * locally-administered unicast MAC from the chip's base MAC, distinct from the
+     * IP101 interface's. Must be set before attach/start so the netif and chip
+     * advertise it. */
+    uint8_t w5500_mac[6];
+    esp_read_mac(w5500_mac, ESP_MAC_ETH);
+    w5500_mac[0] |= 0x02; /* locally administered, unicast */
+    w5500_mac[5] ^= 0x01; /* differ from the IP101 interface MAC */
+    if (esp_eth_ioctl(eth_handle, ETH_CMD_S_MAC_ADDR, w5500_mac) != ESP_OK)
+    {
+        ESP_LOGW(TAG, "W5500 set MAC failed — ARP/peer connect may not work");
+    }
+    else
+    {
+        ESP_LOGI(TAG, "PI LINK (W5500) MAC %02x:%02x:%02x:%02x:%02x:%02x",
+                 w5500_mac[0], w5500_mac[1], w5500_mac[2],
+                 w5500_mac[3], w5500_mac[4], w5500_mac[5]);
     }
 
     /* Create a separate netif with a unique key so it doesn't conflict with IP101 */
@@ -396,19 +499,38 @@ static esp_err_t init_w5500(void)
         .stack = ESP_NETIF_NETSTACK_DEFAULT_ETH,
     };
     esp_netif_t *w5500_netif = esp_netif_new(&w5500_netif_cfg);
+    if (w5500_netif == NULL)
+    {
+        ESP_LOGW(TAG, "W5500 netif create failed — running on IP101 only");
+        esp_eth_driver_uninstall(eth_handle);
+        mac->del(mac);
+        phy->del(phy);
+        spi_bus_free(W5500_SPI_HOST);
+        return ESP_FAIL;
+    }
 
-    ESP_ERROR_CHECK(esp_netif_dhcpc_stop(w5500_netif));
+    /* DHCP client may already be stopped on a static netif; ignore its result. */
+    esp_netif_dhcpc_stop(w5500_netif);
 
     esp_netif_ip_info_t ip_info = {};
     ip_info.ip.addr = esp_ip4addr_aton(W5500_STATIC_IP);
     ip_info.gw.addr = esp_ip4addr_aton(W5500_GATEWAY);
     ip_info.netmask.addr = esp_ip4addr_aton(STATIC_NETMASK);
-    ESP_ERROR_CHECK(esp_netif_set_ip_info(w5500_netif, &ip_info));
 
-    ESP_ERROR_CHECK(esp_netif_attach(w5500_netif, esp_eth_new_netif_glue(eth_handle)));
-    ESP_ERROR_CHECK(esp_eth_start(eth_handle));
+    /* Bring-up steps: graceful so a late failure leaves IP101 untouched rather
+     * than aborting the device. */
+    err = esp_netif_set_ip_info(w5500_netif, &ip_info);
+    if (err == ESP_OK)
+        err = esp_netif_attach(w5500_netif, esp_eth_new_netif_glue(eth_handle));
+    if (err == ESP_OK)
+        err = esp_eth_start(eth_handle);
+    if (err != ESP_OK)
+    {
+        ESP_LOGW(TAG, "W5500 bring-up failed (0x%x) — running on IP101 only", err);
+        return err;
+    }
 
-    ESP_LOGI(TAG, "W5500 initialized at %s", W5500_STATIC_IP);
+    ESP_LOGI(TAG, "PI LINK (W5500) initialized at %s — ready to reach Pi @ %s", W5500_STATIC_IP, PI_IP);
     return ESP_OK;
 }
 
@@ -529,6 +651,8 @@ static void pit_sender_task(void *pvParameters)
 
     while (1)
     {
+        s_pi_connected = false; /* not connected until the stream loop is entered */
+
         int sock = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
         if (sock < 0)
         {
@@ -544,7 +668,7 @@ static void pit_sender_task(void *pvParameters)
 
         if (pi_connect_bounded(sock, &dest, PI_CONNECT_TIMEOUT_MS) < 0)
         {
-            ESP_LOGW(TAG, "Pi connect %s:%d failed (errno=%d) — retrying in %dms",
+            ESP_LOGW(TAG, "PI connect %s:%d failed (errno=%d) — retrying in %dms",
                      PI_IP, PI_PORT, errno, PI_RECONNECT_DELAY_MS);
             close(sock);
             vTaskDelay(pdMS_TO_TICKS(PI_RECONNECT_DELAY_MS));
@@ -557,19 +681,67 @@ static void pit_sender_task(void *pvParameters)
         int nodelay = 1;
         setsockopt(sock, IPPROTO_TCP, TCP_NODELAY, &nodelay, sizeof(nodelay));
 
-        /* Active liveness probing so an unclean drop (cable pull, Pi power loss
-         * — no FIN/RST) is detected in a few seconds and the socket errors out,
-         * kicking us back to the reconnect loop instead of wedging on a dead link. */
+        /* Keepalive is a backstop for the *idle* case only. While we are actively
+         * streaming there is always unacked data in flight, which suppresses
+         * keepalive entirely — so the heartbeat drain below is the real fast-path
+         * dead-peer detector. */
         int ka_enable = 1, ka_idle = 2, ka_intvl = 1, ka_cnt = 3;
         setsockopt(sock, SOL_SOCKET, SO_KEEPALIVE, &ka_enable, sizeof(ka_enable));
         setsockopt(sock, IPPROTO_TCP, TCP_KEEPIDLE, &ka_idle, sizeof(ka_idle));
         setsockopt(sock, IPPROTO_TCP, TCP_KEEPINTVL, &ka_intvl, sizeof(ka_intvl));
         setsockopt(sock, IPPROTO_TCP, TCP_KEEPCNT, &ka_cnt, sizeof(ka_cnt));
 
-        ESP_LOGI(TAG, "Connected to Pi %s:%d — streaming telemetry", PI_IP, PI_PORT);
+        /* Bound send() so a dead link can't wedge the task waiting out the TCP
+         * retransmit chain, and give recv() a short timeout so draining the Pi's
+         * heartbeat never stalls the send cadence. */
+        struct timeval snd_to = {.tv_sec = PI_SEND_TIMEOUT_MS / 1000,
+                                 .tv_usec = (PI_SEND_TIMEOUT_MS % 1000) * 1000};
+        setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, &snd_to, sizeof(snd_to));
+        struct timeval rcv_to = {.tv_sec = 0, .tv_usec = 10 * 1000};
+        setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &rcv_to, sizeof(rcv_to));
+
+        ESP_LOGI(TAG, "PI CONNECTED %s:%d — streaming telemetry", PI_IP, PI_PORT);
+        s_pi_connected = true;
+
+        int64_t last_pi_rx_us = esp_timer_get_time();
+        bool hb_seen = false;
+        TickType_t next_wake = xTaskGetTickCount();
 
         while (1)
         {
+            /* --- Heartbeat / liveness ---
+             * relay.py echoes a byte for every packet it receives. Draining it
+             * here detects a clean close (recv == 0) or socket error immediately,
+             * and timestamps the peer's liveness for the silent-death case. Until
+             * the first byte is seen we DON'T enforce the timeout, so a relay.py
+             * that predates the heartbeat still works (falls back to send()/
+             * keepalive detection). */
+            uint8_t hb[32];
+            int hn = recv(sock, hb, sizeof(hb), 0);
+            if (hn == 0)
+            {
+                ESP_LOGW(TAG, "Pi closed connection — reconnecting");
+                break;
+            }
+            if (hn > 0)
+            {
+                last_pi_rx_us = esp_timer_get_time();
+                hb_seen = true;
+            }
+            else if (errno != EWOULDBLOCK && errno != EAGAIN)
+            {
+                ESP_LOGW(TAG, "Pi recv error (errno=%d) — reconnecting", errno);
+                break;
+            }
+
+            if (hb_seen &&
+                esp_timer_get_time() - last_pi_rx_us > (int64_t)PI_LIVENESS_TIMEOUT_MS * 1000)
+            {
+                ESP_LOGW(TAG, "No heartbeat from Pi for %dms — assuming dead, reconnecting",
+                         PI_LIVENESS_TIMEOUT_MS);
+                break;
+            }
+
             pit_telemetry_t snapshot;
             portENTER_CRITICAL(&pit_mux);
             snapshot = pit_latest;
@@ -584,7 +756,12 @@ static void pit_sender_task(void *pvParameters)
                 break;
             }
             seq++;
-            vTaskDelay(pdMS_TO_TICKS(PI_SEND_INTERVAL_MS));
+
+            /* Fixed-rate cadence: anchoring to an absolute wake time keeps the send
+             * interval steady regardless of how long send()/recv() took on a given
+             * iteration. vTaskDelay() delays AFTER the work, so its period drifts
+             * with the work duration — the source of the inconsistent send rate. */
+            xTaskDelayUntil(&next_wake, pdMS_TO_TICKS(PI_SEND_INTERVAL_MS));
         }
 
         close(sock);
@@ -599,7 +776,7 @@ esp_err_t network_init(network_data_callback_t data_cb,
                        network_connect_callback_t connect_cb,
                        network_disconnect_callback_t disconnect_cb)
 {
-    ESP_LOGI(TAG, "Initializing Ethernet with static IP: %s", STATIC_IP);
+    ESP_LOGI(TAG, "Initializing VEGA link (IP101 native port) server, IP %s", STATIC_IP);
 
     /* Save the callback functions */
     data_callback = data_cb;
@@ -651,6 +828,35 @@ esp_err_t network_init(network_data_callback_t data_cb,
     esp_eth_config_t eth_config = ETH_DEFAULT_CONFIG(mac, phy);
     esp_eth_handle_t eth_handle = NULL;
     ESP_ERROR_CHECK(esp_eth_driver_install(&eth_config, &eth_handle));
+    s_eth_handle_ip101 = eth_handle; /* VEGA-facing handle, for the event handler's labeling */
+
+    /* --------------------------------------------------------
+     * Force a FIXED link mode on the IP101 (VEGA-facing) port.
+     *
+     * Vega's W5500 PHY and this IP101 will not complete auto-negotiation with
+     * each other: Vega lights its link LED (it hears us), but the IP101 never
+     * declares link, so Vega's connection never lands. Both PHYs link fine with
+     * friendlier partners (Vega↔laptop, IP101↔Pi dongle) and two different
+     * cables behave identically, so this is a PHY auto-neg interop problem, not
+     * wiring. Disabling auto-negotiation and driving a fixed 10 Mbps/half-duplex
+     * link sidesteps the failing handshake — the IP101 transmits at a fixed rate
+     * and Vega's PHY locks on by parallel detection. 10M/half is the most
+     * forgiving mode and is far more than the 14-byte CAN frames need.
+     *
+     * Order matters: per esp_eth_ioctl docs the driver must be STOPPED (we're
+     * post-install, pre-start) and auto-neg must be turned off BEFORE speed/
+     * duplex. Non-fatal: if a step fails we log and keep going rather than
+     * bootloop — worst case it falls back to the (failing) auto-neg behavior. */
+    bool ip101_autonego = false;
+    eth_speed_t ip101_speed = ETH_SPEED_10M;
+    eth_duplex_t ip101_duplex = ETH_DUPLEX_HALF;
+    if (esp_eth_ioctl(eth_handle, ETH_CMD_S_AUTONEGO, &ip101_autonego) != ESP_OK)
+        ESP_LOGW(TAG, "VEGA link (IP101): could not disable auto-negotiation");
+    if (esp_eth_ioctl(eth_handle, ETH_CMD_S_SPEED, &ip101_speed) != ESP_OK)
+        ESP_LOGW(TAG, "VEGA link (IP101): could not force 10Mbps");
+    if (esp_eth_ioctl(eth_handle, ETH_CMD_S_DUPLEX_MODE, &ip101_duplex) != ESP_OK)
+        ESP_LOGW(TAG, "VEGA link (IP101): could not force half-duplex");
+    ESP_LOGI(TAG, "VEGA link (IP101): forced fixed 10Mbps half-duplex (auto-neg OFF) to link Vega's W5500");
 
     /* Attach Ethernet driver to network interface */
     ESP_ERROR_CHECK(esp_netif_attach(eth_netif, esp_eth_new_netif_glue(eth_handle)));
@@ -694,4 +900,12 @@ esp_err_t network_init(network_data_callback_t data_cb,
 const char *network_get_ip(void)
 {
     return ip_address_str;
+}
+
+/* ============================================================
+ * PI LINK STATUS (for the UI indicator)
+ * ============================================================ */
+bool network_pi_is_connected(void)
+{
+    return s_pi_connected;
 }

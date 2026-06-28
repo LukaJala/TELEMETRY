@@ -58,8 +58,18 @@ static void on_client_disconnected(void)
 {
     ESP_LOGI(TAG, "Client disconnected — resetting to initial state");
     camera_stop();
+
+    /* Data source (Vega/laptop via W5500) is gone — blank every value to 0 so a
+     * stale reading can't be mistaken for live telemetry. Zeroing the struct and
+     * forcing every update flag makes ui_update_can_data repaint all widgets; with
+     * fault_code 0 the fault overlay clears and all status dots go dark too. */
+    memset(&s_can_data, 0, sizeof(s_can_data));
+    s_can_data.update_flags = 0xFFFFFFFF;
+    ui_update_can_data(&s_can_data);
+    s_can_data.update_flags = 0;
+
     ui_refresh();
-    ui_set_text("Waiting...");
+    ui_set_text("DISCONNECTED — no data");
 }
 
 /*
@@ -228,6 +238,9 @@ void app_main(void)
      **/
     while (1)
     {
-        vTaskDelay(pdMS_TO_TICKS(1000));
+        /* Drive the bottom-left Pi telemetry-link indicator. ui_set_pi_status()
+         * de-dupes and is lock-safe, so an unconditional poll here is cheap. */
+        ui_set_pi_status(network_pi_is_connected());
+        vTaskDelay(pdMS_TO_TICKS(500));
     }
 }

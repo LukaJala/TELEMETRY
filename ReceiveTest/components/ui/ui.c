@@ -96,6 +96,10 @@ static lv_obj_t *lbl_24v = NULL;
 static lv_obj_t *warn_strip = NULL;
 static lv_obj_t *status_label = NULL;
 
+/* Pi telemetry-link indicator (bottom-left corner) */
+static lv_obj_t *dot_pi = NULL;
+static lv_obj_t *lbl_pi = NULL;
+
 /* =========================================================================
  * Battery-tab widget handles
  * ========================================================================= */
@@ -455,6 +459,21 @@ static void build_left_panel(lv_obj_t *scr)
     lv_obj_set_style_text_color(warn_lbl, C_WHITE, LV_PART_MAIN);
     lv_obj_set_style_text_font(warn_lbl, &lv_font_montserrat_24, LV_PART_MAIN);
     lv_obj_align(warn_lbl, LV_ALIGN_CENTER, 0, 0);
+
+    /* ── Pi telemetry-link indicator (bottom-left corner) ──────────────────
+     * Created last so it sits on top of the warn strip on the rare occasions
+     * that overlaps. Dark chip keeps it readable over any background. Starts in
+     * the disconnected state; main.c polls network_pi_is_connected() to update. */
+    {
+        lv_obj_t *pi_chip = make_panel(lp, LP_PAD, SCR_H - 30, 158, 26, C_TILE);
+        lv_obj_set_style_radius(pi_chip, 6, LV_PART_MAIN);
+        dot_pi = make_dot(pi_chip, 7, 6, C_RED, 14);
+        lbl_pi = lv_label_create(pi_chip);
+        lv_label_set_text(lbl_pi, "PI OFFLINE");
+        lv_obj_set_style_text_color(lbl_pi, C_GRAY, LV_PART_MAIN);
+        lv_obj_set_style_text_font(lbl_pi, &lv_font_montserrat_14, LV_PART_MAIN);
+        lv_obj_set_pos(lbl_pi, 28, 5);
+    }
 }
 
 /* =========================================================================
@@ -788,6 +807,28 @@ void ui_set_tab(uint8_t tab_index)
     if (!lvgl_port_lock(0))
         return;
     lv_tabview_set_active(tabview, tab_index, LV_ANIM_OFF);
+    lvgl_port_unlock();
+}
+
+void ui_set_pi_status(bool connected)
+{
+    if (!dot_pi || !lbl_pi)
+        return;
+
+    /* De-dupe: only touch widgets on an actual state change. shown_state stays
+     * unchanged if the lock can't be taken (camera streaming), so the caller's
+     * next poll retries until it sticks. -1 = nothing shown yet. */
+    static int shown_state = -1;
+    if (shown_state == (int)connected)
+        return;
+    if (!lvgl_port_lock(0))
+        return;
+
+    dot_set(dot_pi, connected ? C_GREEN : C_RED);
+    lv_label_set_text(lbl_pi, connected ? "PI ONLINE" : "PI OFFLINE");
+    lv_obj_set_style_text_color(lbl_pi, connected ? C_GREEN : C_GRAY, LV_PART_MAIN);
+
+    shown_state = (int)connected;
     lvgl_port_unlock();
 }
 
