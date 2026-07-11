@@ -24,12 +24,27 @@ static esp_lcd_panel_handle_t s_panel = NULL;
 /* Decoded CAN state — updated by every incoming CAN frame */
 static display_data_t s_can_data;
 
+/* Backup-camera reverse latch. Vega relays the Kelly KLS motor command over the
+ * W5500 at ~50 Hz; the camera is toggled only on the reverse edge, not on every
+ * frame. Reset on (dis)connect since the camera is force-stopped there. */
+static bool s_reverse_active = false;
+
 /* Commands sent from broadcaster.py / sender.py */
 #define CMD_CAM_START "__CAM_START__"
 #define CMD_CAM_STOP "__CAM_STOP__"
 #define CMD_TAB_0 "__TAB_0__"
 #define CMD_TAB_1 "__TAB_1__"
 #define CMD_TAB_2 "__TAB_2__"
+
+/* Reverse / backup-camera trigger.
+ * Vega relays the Kelly KLS motor-controller command frame (CAN id 0x0CF1051E)
+ * over the W5500. Its data byte 2 low two bits encode the commanded drive
+ * direction: 0 = neutral, 1 = forward, 2 = reverse (see Vega app.cpp
+ * klsFrame.data[2] — currently hard-set to 2 for reverse testing). When Vega
+ * commands reverse, the ESP shows the backup camera. */
+#define CAN_ID_KLS_COMMAND 0x0CF1051EUL
+#define KLS_DIR_MASK 0x03
+#define KLS_DIR_REVERSE 0x02
 
 /* Size of a binary CAN-over-TCP frame: [0x01 magic][CAN_ID 4B][DLC 1B][data 8B] */
 #define CAN_FRAME_SIZE 14
@@ -46,6 +61,7 @@ static void on_client_connected(void)
      * camera, but this guarantees it regardless of how the last session ended.
      * camera_stop() is a no-op when the camera isn't running. */
     camera_stop();
+    s_reverse_active = false; /* clear the reverse latch for a fresh session */
     ui_set_status("Connected");
 }
 
@@ -58,6 +74,7 @@ static void on_client_disconnected(void)
 {
     ESP_LOGI(TAG, "Client disconnected — resetting to initial state");
     camera_stop();
+    s_reverse_active = false; /* clear the reverse latch; next session re-detects */
 
     /* Data source (Vega/laptop via W5500) is gone — blank every value to 0 so a
      * stale reading can't be mistaken for live telemetry. Zeroing the struct and
@@ -131,6 +148,31 @@ static void on_data_received(const uint8_t *data, int length)
     const uint8_t *payload = &data[6];
 
     display_route_frame(&s_can_data, can_id, payload);
+
+    /* Backup camera: Vega's relayed KLS command (0x0CF1051E) carries the drive
+     * direction in byte 2. Entering reverse starts the camera; leaving reverse
+     * stops it and repaints the dashboard. Edge-detected so it fires once per
+     * transition, not on every 20 ms KLS frame. */
+    if (can_id == CAN_ID_KLS_COMMAND)
+    {
+        bool reverse = (payload[2] & KLS_DIR_MASK) == KLS_DIR_REVERSE;
+        if (reverse && !s_reverse_active)
+        {
+            s_reverse_active = true;
+            ESP_LOGI(TAG, "Vega commanded REVERSE — starting backup camera");
+            if (camera_start(s_panel) != ESP_OK)
+            {
+                ui_set_text("Camera unavailable");
+            }
+        }
+        else if (!reverse && s_reverse_active)
+        {
+            s_reverse_active = false;
+            ESP_LOGI(TAG, "Vega left reverse — stopping backup camera");
+            camera_stop();
+            ui_refresh();
+        }
+    }
 
     ESP_LOGD(TAG, "CAN frame 0x%08lX decoded (flags=0x%lX)",
              (unsigned long)can_id, (unsigned long)s_can_data.update_flags);
