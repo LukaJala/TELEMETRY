@@ -343,24 +343,24 @@ static inline void display_decode_mc_status1(display_mc_status1_t *out, const ui
 
 /* ---- MC_Status2 (Kelly Msg2, 8B, 50ms) ----------------------------------
  * Byte 0: ThrottleFB (0-255)
- * Byte 1: CtrlTemp (raw - 40 = °C)
- * Byte 2: MotorTemp (raw - 30 = °C)
+ * Byte 1: CtrlTemp (U8, raw - 40 = °C, range -40..215)
+ * Byte 2: MotorTemp (U8, raw - 30 = °C, range -30..225)
  * Byte 3: Reserved
- * Byte 4: DirStatus [1:0]=FBDir [3:2]=CmdDir
+ * Byte 4: DirStatus [1:0]=CmdDir [3:2]=FBDir
  * Byte 5: Switches (hall sensors, brake, fwd, rev, etc.)
  * ----------------------------------------------------------------------- */
 typedef struct
 {
     uint8_t throttle_fb;
-    int8_t ctrl_temp_c;
-    int8_t motor_temp_c;
+    int16_t ctrl_temp_c;
+    int16_t motor_temp_c;
 } display_mc_status2_t;
 
 static inline void display_decode_mc_status2(display_mc_status2_t *out, const uint8_t d[8])
 {
     out->throttle_fb = d[0];
-    out->ctrl_temp_c = (int8_t)d[1] - 40;
-    out->motor_temp_c = (int8_t)d[2] - 30;
+    out->ctrl_temp_c = (int16_t)d[1] - 40;
+    out->motor_temp_c = (int16_t)d[2] - 30;
 }
 
 /* ---- R_BMS_CellExtremes (8B, 200ms) ------------------------------------
