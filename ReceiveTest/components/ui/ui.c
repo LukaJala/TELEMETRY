@@ -12,14 +12,22 @@
  *   GPS/TRIP   — speed, heading, altitude, sats, odo, UTC, lat/lon
  *
  * FAULT OVERLAY: covers right panel only, red bg, non-dismissable
+ *
+ * CAMERA PiP: bottom-right, topmost (above the fault overlay) — the backup
+ * camera must always be visible. An lv_canvas shows the RGB565 buffer the
+ * camera PPA writes into; see ui_cam_pip_*.
  */
 
 #include "ui.h"
 #include "esp_lvgl_port.h"
 #include "lvgl.h"
 #include "display_can_spec.h"
+#include "esp_heap_caps.h"
+#include "esp_log.h"
 #include <stdio.h>
 #include <string.h>
+
+static const char *TAG = "UI";
 
 extern const lv_font_t lv_font_montserrat_72;
 
@@ -57,6 +65,16 @@ extern const lv_font_t lv_font_montserrat_72;
 #define TBAR_W ((LEFT_W - 2 * LP_PAD - 8) / 2) /* throttle/regen bar width each (~172px) */
 #define CELL_BAR_W 840                         /* cell voltage range bar width */
 #define MPPT_BAR_W 280                         /* per-MPPT bar width */
+
+/* Camera PiP window (bottom-right corner). 480x240 shows the full sensor
+ * width at the PPA's 6/16 scale with a centered vertical crop — a wide
+ * rear-view-mirror strip. Both dims must keep the camera's PPA scale on its
+ * 1/16 grid: width a multiple of 80 px (see camera_config_pip()). The bottom
+ * band under the tab content (screen y >= ~540) is clear on every tab. */
+#define CAM_PIP_W 480
+#define CAM_PIP_H 240
+#define CAM_PIP_BORDER 2
+#define CAM_PIP_MARGIN 4 /* gap to the screen's bottom-right corner */
 
 /* Left panel column x anchors */
 #define LP_PAD 12
@@ -166,6 +184,13 @@ static lv_obj_t *fault_limp_cont = NULL; /* grace timer + derate, hidden when no
 static lv_obj_t *lbl_fault_timer = NULL;
 static lv_obj_t *lbl_fault_derate = NULL;
 static lv_obj_t *lbl_fault_thr = NULL;
+
+/* =========================================================================
+ * Camera PiP widget handles
+ * ========================================================================= */
+static lv_obj_t *cam_pip_frame = NULL;  /* border frame (position/show/hide) */
+static lv_obj_t *cam_pip_canvas = NULL; /* canvas bound to cam_pip_buf */
+static void *cam_pip_buf = NULL;        /* RGB565, PPA-written, PSRAM */
 
 /* =========================================================================
  * Fault subtitles (matched to BPS_FAULT_NAMES index)
@@ -750,6 +775,36 @@ static void build_fault_overlay(lv_obj_t *scr)
 }
 
 /* =========================================================================
+ * Build camera PiP window — bottom-right, created last so it stays on top of
+ * every tab and the fault overlay (the backup camera must always be visible;
+ * in reverse the camera goes fullscreen and covers everything anyway).
+ * ========================================================================= */
+static void build_cam_pip(lv_obj_t *scr)
+{
+    /* PPA DMA target: 128-byte aligned, size is a multiple of 128 (480*240*2) */
+    cam_pip_buf = heap_caps_aligned_calloc(128, 1, CAM_PIP_W * CAM_PIP_H * 2,
+                                           MALLOC_CAP_SPIRAM);
+    if (!cam_pip_buf)
+    {
+        ESP_LOGE(TAG, "PiP buffer alloc failed (%d bytes) — no camera window",
+                 CAM_PIP_W * CAM_PIP_H * 2);
+        return;
+    }
+
+    cam_pip_frame = make_panel(scr,
+                               SCR_W - CAM_PIP_W - 2 * CAM_PIP_BORDER - CAM_PIP_MARGIN,
+                               SCR_H - CAM_PIP_H - 2 * CAM_PIP_BORDER - CAM_PIP_MARGIN,
+                               CAM_PIP_W + 2 * CAM_PIP_BORDER,
+                               CAM_PIP_H + 2 * CAM_PIP_BORDER,
+                               C_DIV);
+
+    cam_pip_canvas = lv_canvas_create(cam_pip_frame);
+    lv_canvas_set_buffer(cam_pip_canvas, cam_pip_buf, CAM_PIP_W, CAM_PIP_H,
+                         LV_COLOR_FORMAT_RGB565);
+    lv_obj_set_pos(cam_pip_canvas, CAM_PIP_BORDER, CAM_PIP_BORDER);
+}
+
+/* =========================================================================
  * ui_init
  * ========================================================================= */
 void ui_init(lv_display_t *disp)
@@ -762,7 +817,8 @@ void ui_init(lv_display_t *disp)
 
     build_left_panel(scr);
     build_right_panel(scr);
-    build_fault_overlay(scr); /* must be last — highest z-order */
+    build_fault_overlay(scr); /* above the panels */
+    build_cam_pip(scr);       /* must be last — highest z-order */
 
     lvgl_port_unlock();
 }
@@ -779,12 +835,20 @@ void ui_refresh(void)
 
 /* =========================================================================
  * ui_set_text / ui_set_status — write to the status bar in left panel
+ *
+ * Bounded lock: when the camera is fullscreen the stream task holds the LVGL
+ * lock for the whole phase, so a plain lock here would stall the caller (the
+ * TCP task) until reverse ends. Waiting a few ms rides out a normal render
+ * tick; beyond that the update is dropped on purpose.
+ * NOTE: lvgl_port_lock(0) means "wait forever", NOT try-lock.
  * ========================================================================= */
+#define UI_LOCK_TIMEOUT_MS 50
+
 void ui_set_text(const char *text)
 {
     if (!status_label || !text)
         return;
-    if (!lvgl_port_lock(0))
+    if (!lvgl_port_lock(UI_LOCK_TIMEOUT_MS))
         return;
     lv_label_set_text(status_label, text);
     lvgl_port_unlock();
@@ -794,7 +858,7 @@ void ui_set_status(const char *status)
 {
     if (!status_label || !status)
         return;
-    if (!lvgl_port_lock(0))
+    if (!lvgl_port_lock(UI_LOCK_TIMEOUT_MS))
         return;
     lv_label_set_text(status_label, status);
     lvgl_port_unlock();
@@ -804,9 +868,46 @@ void ui_set_tab(uint8_t tab_index)
 {
     if (!tabview)
         return;
-    if (!lvgl_port_lock(0))
+    if (!lvgl_port_lock(UI_LOCK_TIMEOUT_MS))
         return;
     lv_tabview_set_active(tabview, tab_index, LV_ANIM_OFF);
+    lvgl_port_unlock();
+}
+
+/* =========================================================================
+ * Camera PiP plumbing — see camera_config_pip() in the camera component
+ * ========================================================================= */
+void *ui_cam_pip_buffer(uint32_t *w, uint32_t *h)
+{
+    if (w)
+        *w = CAM_PIP_W;
+    if (h)
+        *h = CAM_PIP_H;
+    return cam_pip_buf;
+}
+
+void ui_cam_pip_frame_ready(void)
+{
+    if (!cam_pip_canvas)
+        return;
+    /* Short bounded wait: if LVGL is mid-render just drop this repaint — the
+     * buffer already holds the newest frame and the next callback retries. */
+    if (!lvgl_port_lock(10))
+        return;
+    lv_obj_invalidate(cam_pip_canvas);
+    lvgl_port_unlock();
+}
+
+void ui_cam_pip_set_active(bool active)
+{
+    if (!cam_pip_frame)
+        return;
+    if (!lvgl_port_lock(100))
+        return;
+    if (active)
+        lv_obj_clear_flag(cam_pip_frame, LV_OBJ_FLAG_HIDDEN);
+    else
+        lv_obj_add_flag(cam_pip_frame, LV_OBJ_FLAG_HIDDEN);
     lvgl_port_unlock();
 }
 
@@ -816,12 +917,12 @@ void ui_set_pi_status(bool connected)
         return;
 
     /* De-dupe: only touch widgets on an actual state change. shown_state stays
-     * unchanged if the lock can't be taken (camera streaming), so the caller's
+     * unchanged if the lock can't be taken (camera fullscreen), so the caller's
      * next poll retries until it sticks. -1 = nothing shown yet. */
     static int shown_state = -1;
     if (shown_state == (int)connected)
         return;
-    if (!lvgl_port_lock(0))
+    if (!lvgl_port_lock(20))
         return;
 
     dot_set(dot_pi, connected ? C_GREEN : C_RED);
@@ -839,7 +940,11 @@ void ui_update_can_data(const display_data_t *d)
 {
     if (!d)
         return;
-    if (!lvgl_port_lock(0))
+    /* Bounded: outwaits a normal render tick, but drops the update instead of
+     * stalling the TCP task if the camera grabbed the lock for fullscreen in
+     * the window between main.c's camera_is_fullscreen() check and here.
+     * Dropped updates self-heal on the next frame of the same CAN ID. */
+    if (!lvgl_port_lock(UI_LOCK_TIMEOUT_MS))
         return;
 
     uint32_t f = d->update_flags;

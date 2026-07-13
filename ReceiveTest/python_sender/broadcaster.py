@@ -7,7 +7,9 @@ Interactive commands (type + Enter while running):
   0-5   Pin to scenario (only that scenario runs)
   c     Resume cycling through all scenarios
   t     Cycle display tab (BATTERY → SOLAR/MOTOR → GPS/TRIP → ...)
-  v     Toggle camera feed on/off
+  r     Toggle reverse gear — display should switch the always-on camera
+        PiP to fullscreen while engaged
+  v     Toggle manual camera fullscreen (__CAM_START__/__CAM_STOP__)
 
 Scenarios:
   0 - Normal cruising
@@ -520,7 +522,7 @@ def broadcast_100ms(sc, elapsed_s):
             reg_out,
             sc["regen_pct"] > 0,
             True,
-            1 if sc["speed"] > 0 else 0,
+            _drive_mode(sc),
             sc["regen_pct"] > 0,
         ),
     )
@@ -547,7 +549,7 @@ def broadcast_200ms(sc, elapsed_s):
         enc_vega_status(
             sc["speed"] + wobble * 2,
             127.4 + elapsed_s * 0.00001,
-            1 if sc["speed"] > 0 else 0,
+            _drive_mode(sc),
             sc["regen_pct"] > 0,
             True,
             0,
@@ -625,6 +627,14 @@ def _input_thread():
 
 _current_tab = 0
 _cam_active = False
+_reverse = False  # True = send drive_mode REV in Vega frames
+
+
+def _drive_mode(sc):
+    """Vega drive_mode: 0=Park 1=FWD 2=REV (display goes fullscreen camera on REV)."""
+    if _reverse:
+        return 2
+    return 1 if sc["speed"] > 0 else 0
 
 
 def _switch_scenario(idx, pin_label):
@@ -650,7 +660,8 @@ def _print_help():
     print("  ├─────────────────────────────────────────────────┤")
     print("  │  [t]   Cycle display tab (BATTERY → SOLAR →     │")
     print("  │         GPS/TRIP → BATTERY ...)                  │")
-    print("  │  [v]   Toggle camera feed on/off                 │")
+    print("  │  [r]   Toggle REVERSE gear (camera fullscreen)   │")
+    print("  │  [v]   Toggle manual camera fullscreen           │")
     print("  └─────────────────────────────────────────────────┘")
     print()
 
@@ -715,15 +726,23 @@ def main():
                     send_cmd(f"__TAB_{_current_tab}__")
                     print(f"  Tab -> {TAB_NAMES[_current_tab]}")
 
+                elif cmd == "r":
+                    global _reverse
+                    _reverse = not _reverse
+                    if _reverse:
+                        print("  REVERSE engaged — display should go fullscreen camera")
+                    else:
+                        print("  Reverse released — display should return to PiP")
+
                 elif cmd == "v":
                     global _cam_active
                     _cam_active = not _cam_active
                     if _cam_active:
                         send_cmd("__CAM_START__")
-                        print("  Camera ON")
+                        print("  Manual camera fullscreen ON")
                     else:
                         send_cmd("__CAM_STOP__")
-                        print("  Camera OFF")
+                        print("  Manual camera fullscreen OFF (PiP)")
 
                 else:
                     print(f"  Unknown command '{cmd}'")

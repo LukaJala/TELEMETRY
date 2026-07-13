@@ -24,7 +24,9 @@ static esp_lcd_panel_handle_t s_panel = NULL;
 /* Decoded CAN state — updated by every incoming CAN frame */
 static display_data_t s_can_data;
 
-/* Commands sent from broadcaster.py / sender.py */
+/* Commands sent from broadcaster.py / sender.py.
+ * The backup camera is always live in a PiP window; CAM_START/CAM_STOP force
+ * it fullscreen / back to PiP (same effect as shifting in/out of reverse). */
 #define CMD_CAM_START "__CAM_START__"
 #define CMD_CAM_STOP "__CAM_STOP__"
 #define CMD_TAB_0 "__TAB_0__"
@@ -34,6 +36,9 @@ static display_data_t s_can_data;
 /* Size of a binary CAN-over-TCP frame: [0x01 magic][CAN_ID 4B][DLC 1B][data 8B] */
 #define CAN_FRAME_SIZE 14
 
+/* Vega_DriverInputs drive_mode encoding (display_can_spec.h): 0=Park 1=FWD 2=REV */
+#define DRIVE_MODE_REVERSE 2
+
 /*
  * CONNECT CALLBACK
  * Called by network component when a TCP client connects.
@@ -41,11 +46,10 @@ static display_data_t s_can_data;
 static void on_client_connected(void)
 {
     ESP_LOGI(TAG, "Client connected");
-    /* Defensive: always begin a session from a known state. If a previous
-     * client died mid-stream, the disconnect handler already stopped the
-     * camera, but this guarantees it regardless of how the last session ended.
-     * camera_stop() is a no-op when the camera isn't running. */
-    camera_stop();
+    /* Begin every session from a known state: camera in PiP unless the new
+     * data source says otherwise (reverse gear re-engages fullscreen within
+     * one frame of the first Vega_DriverInputs message). */
+    camera_set_fullscreen_manual(false);
     ui_set_status("Connected");
 }
 
@@ -57,7 +61,19 @@ static void on_client_connected(void)
 static void on_client_disconnected(void)
 {
     ESP_LOGI(TAG, "Client disconnected — resetting to initial state");
-    camera_stop();
+
+    /* Data source is gone — no more drive-mode frames will arrive, so drop
+     * any fullscreen back to PiP. The camera itself keeps running. */
+    camera_set_fullscreen_manual(false);
+    camera_set_reverse(false);
+
+    /* Wait (bounded) for the stream task to actually leave fullscreen and
+     * release the LVGL lock — otherwise the zero-out below can't paint and
+     * stale values would survive under the repaint. */
+    for (int i = 0; i < 50 && camera_is_fullscreen(); i++)
+    {
+        vTaskDelay(pdMS_TO_TICKS(10));
+    }
 
     /* Data source (Vega/laptop via W5500) is gone — blank every value to 0 so a
      * stale reading can't be mistaken for live telemetry. Zeroing the struct and
@@ -90,18 +106,20 @@ static void on_data_received(const uint8_t *data, int length)
 
         if (strcmp(cmd, CMD_CAM_START) == 0)
         {
-            ESP_LOGI(TAG, "Camera start command received");
-            if (camera_start(s_panel) != ESP_OK)
+            ESP_LOGI(TAG, "Camera fullscreen ON command received");
+            /* Normally the camera is already streaming (PiP); this also
+             * doubles as a bench recovery path if the boot-time start failed. */
+            if (!camera_is_running() && camera_start(s_panel) != ESP_OK)
             {
                 ui_set_text("Camera unavailable");
             }
+            camera_set_fullscreen_manual(true);
         }
         else if (strcmp(cmd, CMD_CAM_STOP) == 0)
         {
-            ESP_LOGI(TAG, "Camera stop command received");
-            camera_stop();
-            ui_refresh();
-            ui_set_text("Waiting...");
+            ESP_LOGI(TAG, "Camera fullscreen OFF command received");
+            /* Back to PiP — the stream task repaints the dashboard on exit */
+            camera_set_fullscreen_manual(false);
         }
         else if (strcmp(cmd, CMD_TAB_0) == 0)
         {
@@ -135,7 +153,17 @@ static void on_data_received(const uint8_t *data, int length)
     ESP_LOGD(TAG, "CAN frame 0x%08lX decoded (flags=0x%lX)",
              (unsigned long)can_id, (unsigned long)s_can_data.update_flags);
 
-    if (!camera_is_running())
+    /* Reverse gear puts the backup camera fullscreen; any other mode returns
+     * it to the PiP window. The stream task switches at the next frame. */
+    if (s_can_data.update_flags & DFLAG_VEGA_INPUTS)
+    {
+        camera_set_reverse(s_can_data.vega_inputs.drive_mode == DRIVE_MODE_REVERSE);
+    }
+
+    /* While fullscreen, the camera owns the display — skip widget updates
+     * (they'd only time out on the LVGL lock; state still accumulates in
+     * s_can_data and repaints when the dashboard comes back). */
+    if (!camera_is_fullscreen())
     {
         ui_update_can_data(&s_can_data);
     }
@@ -205,13 +233,32 @@ void app_main(void)
     ui_init(disp);
 
     /*
-     * Step 5: Initialize camera (OV5647 via MIPI CSI)
+     * Step 5: Initialize camera (OV5647 via MIPI CSI) and start streaming
      * - Sets up I2C/SCCB, CSI controller, and ISP
-     * - Does not start streaming yet
+     * - Streams continuously from boot: PiP window on the dashboard,
+     *   fullscreen whenever the car is in reverse (or __CAM_START__)
      **/
-    if (camera_init() != ESP_OK)
+    if (camera_init() == ESP_OK)
     {
-        ESP_LOGW(TAG, "Camera init failed - camera mode will not be available");
+        uint32_t pip_w = 0, pip_h = 0;
+        void *pip_buf = ui_cam_pip_buffer(&pip_w, &pip_h);
+        if (pip_buf != NULL &&
+            camera_config_pip(pip_buf, pip_w, pip_h, ui_cam_pip_frame_ready) == ESP_OK &&
+            camera_start(s_panel) == ESP_OK)
+        {
+            ESP_LOGI(TAG, "Backup camera live: PiP %lux%lu, fullscreen in reverse",
+                     (unsigned long)pip_w, (unsigned long)pip_h);
+        }
+        else
+        {
+            ESP_LOGW(TAG, "Camera PiP unavailable - hiding camera window");
+            ui_cam_pip_set_active(false);
+        }
+    }
+    else
+    {
+        ESP_LOGW(TAG, "Camera init failed - hiding camera window");
+        ui_cam_pip_set_active(false);
     }
 
     /*
@@ -234,7 +281,8 @@ void app_main(void)
      * All the work happens in background tasks:
      * - LVGL task handles rendering
      * - TCP server task handles network
-     * - Camera stream task handles camera (when active)
+     * - Camera stream task runs continuously (PiP window, or fullscreen
+     *   while in reverse)
      **/
     while (1)
     {

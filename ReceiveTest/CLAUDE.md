@@ -34,7 +34,7 @@ Run the Python broadcaster from `python_sender/` to send simulated CAN frames ov
 python python_sender/broadcaster.py
 ```
 
-This cycles through 6 driving scenarios (normal, acceleration, regen, warning, fault, charging) every 30 seconds. The broadcaster connects to `192.168.1.100:5000`.
+This cycles through 6 driving scenarios (normal, acceleration, regen, warning, fault, charging) every 30 seconds. The broadcaster connects to `192.168.1.100:5000`. Interactive keys while it runs: `0-5` pin a scenario, `c` resume cycling, `t` cycle tabs, `r` toggle reverse gear (camera should go fullscreen), `v` toggle manual camera fullscreen.
 
 To send a single ad-hoc message or test camera commands, use `python_sender/sender.py` or `python_sender/senderCamera.py`.
 
@@ -50,21 +50,27 @@ To send a single ad-hoc message or test camera commands, use `python_sender/send
         │ calls on_data_received() in main.c
         ▼
   Two frame types:
-  ┌─────────────────────────────────────────────────────┐
-  │ Text command (data[0] >= 0x20)                      │
-  │   __CAM_START__  → camera_start(panel)              │
-  │   __CAM_STOP__   → camera_stop() + ui_refresh()     │
-  ├─────────────────────────────────────────────────────┤
-  │ Binary CAN frame (14 bytes, magic byte 0x01)        │
-  │   [0x01][CAN_ID 4B LE][DLC 1B][payload 8B]         │
-  │   → display_route_frame() → display_data_t          │
-  │   → ui_update_can_data() (skipped if camera active) │
-  └─────────────────────────────────────────────────────┘
+  ┌────────────────────────────────────────────────────────────┐
+  │ Text command (data[0] >= 0x20)                             │
+  │   __CAM_START__  → camera_set_fullscreen_manual(true)      │
+  │   __CAM_STOP__   → camera_set_fullscreen_manual(false)     │
+  ├────────────────────────────────────────────────────────────┤
+  │ Binary CAN frame (14 bytes, magic byte 0x01)               │
+  │   [0x01][CAN_ID 4B LE][DLC 1B][payload 8B]                │
+  │   → display_route_frame() → display_data_t                 │
+  │   → camera_set_reverse(drive_mode == 2) on Vega inputs     │
+  │   → ui_update_can_data() (skipped while fullscreen)        │
+  └────────────────────────────────────────────────────────────┘
 ```
 
-### Camera / Display Mutex
+### Camera / Display Modes
 
-The camera and LVGL share the same DPI frame buffer (zero-copy pipeline). When the camera is streaming, the stream task **holds the LVGL lock** for the entire duration. `ui_set_text()` and `ui_set_status()` check `lvgl_port_lock(0)` and silently return if the lock is held — this is intentional, not a bug. `ui_refresh()` must be called after `camera_stop()` to force LVGL to repaint over the stale camera frame.
+The backup camera is **always visible**: it starts at boot and streams continuously in one of two modes, switched by the stream task at frame boundaries (effective fullscreen = manual command OR reverse gear):
+
+- **PiP (default)** — the PPA scales a centered crop of each sensor frame (full width, trimmed top/bottom — a wide mirror strip) into a private RGB565 buffer displayed by an `lv_canvas` at the bottom-right, above every overlay including the fault overlay. LVGL runs normally and telemetry keeps updating. Only every `CAM_PIP_FRAME_DIV`-th frame is converted (bandwidth). No PPA rotation: LVGL's sw-rotate orients the widget; if the PiP is 180° off on the bench, flip `CAM_PIP_ROTATION`.
+- **Fullscreen (reverse / `__CAM_START__`)** — zero-copy: the PPA rotates frames directly into the DPI frame buffer. The stream task **holds the LVGL lock** for the whole fullscreen phase, freezing the dashboard (CAN state still accumulates in `s_can_data`). On exit it invalidates the screen so LVGL repaints over the stale camera frame — no manual `ui_refresh()` needed.
+
+Locking rule: `lvgl_port_lock(0)` means **wait forever**, not try-lock. All `ui_*` entry points therefore take the lock with a short bounded timeout and drop the update if the camera holds it (fullscreen) — this is intentional; dropped updates self-heal on the next frame of the same CAN ID.
 
 ### Components
 
@@ -72,7 +78,7 @@ The camera and LVGL share the same DPI frame buffer (zero-copy pipeline). When t
 |---|---|
 | `components/display/` | MIPI DSI hardware init — backlight GPIO 26, LDO ch3 2500mV, JD9365 at 60MHz, returns `esp_lcd_panel_handle_t` |
 | `components/ui/` | LVGL dashboard: speed (center, large), SOC bar + pack V/I (right), drive mode + regen (left), 4 bottom tiles (motor temp, ctrl temp, cell spread, solar W), status bar, fault overlay |
-| `components/camera/` | OV5647 CSI pipeline: XCLK on GPIO 20, I2C on GPIO 7/8 (addr 0x36), ISP RAW8→RGB888, DMA directly into DPI frame buffer |
+| `components/camera/` | OV5647 CSI pipeline: XCLK on GPIO 20, I2C on GPIO 7/8 (addr 0x36), ISP RAW10→RGB565, PPA into the PiP buffer (default) or directly into the DPI frame buffer (fullscreen) |
 | `components/network/` | Ethernet static IP via IP101 PHY, TCP server on port 5000, stream accumulator for partial/multi-frame recv() |
 | `components/can_spec/` | Header-only wrapper for `display_can_spec.h` (CAN IDs, decode functions, `display_data_t`, `display_route_frame()`) |
 
@@ -94,6 +100,8 @@ After calling `display_route_frame()`, `main.c` clears `update_flags` to zero so
 
 ## Known Issues / Future Work
 
+- **PiP orientation needs bench verification**: the PiP path skips PPA rotation and relies on LVGL's sw-rotate. If the PiP image is 180° off relative to the fullscreen view, change `CAM_PIP_ROTATION` in `camera.c` to `PPA_SRM_ROTATION_ANGLE_180`.
+- **PiP frame rate**: `CAM_PIP_FRAME_DIV 2` (~22 fps) is a bandwidth guess; verify dashboard responsiveness on hardware and tune.
 - **Fault grace timer display**: `broadcaster.py` scenario 4 has `grace_timer=90s` but the scenario only runs 30s, so the countdown barely moves. Fix: lower grace timer to ≤25 or raise `SCENARIO_DURATION_S` to ≥95.
 - **BPS fault codes 14–15** (`BMS_Shutdown`, `VCU_MIA`) exist in the CAN database but are not in the `bps_fault_t` enum — the display shows "UNKNOWN FAULT" for these.
 - **Pit telemetry system** (not yet built): needs to decode the full CAN database including MPPT status/sweep/commands, Vega fault, BPS emergency, R_BMS energy/resistance, and all messages not currently in `display_can_spec.h`.

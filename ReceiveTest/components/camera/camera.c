@@ -1,10 +1,28 @@
 /*
  * camera.c
- * OV5647 MIPI CSI camera streaming to DSI display panel.
+ * OV5647 MIPI CSI camera streaming — always-on backup camera.
  *
  * Pipeline: OV5647 (RAW10, 1280x960 full-sensor 2x2 binning)
  *             -> CSI -> ISP (RAW10 -> RGB565) -> capture buffer (PSRAM)
- *             -> PPA scale + 90deg rotate -> DPI frame buffer (RGB565)
+ *             -> PPA scale (+rotate) -> one of two output targets:
+ *
+ *   PiP (default):  centered crop scaled into a private RGB565 buffer that an
+ *                   LVGL canvas displays (see ui_cam_pip_*). No rotation — the
+ *                   buffer is widget content in LVGL's landscape logical space,
+ *                   so LVGL's sw-rotate orients it at flush time. LVGL keeps
+ *                   running; the dashboard stays live. Only every
+ *                   CAM_PIP_FRAME_DIV-th frame is converted to share CPU and
+ *                   PSRAM bandwidth with the dashboard.
+ *   Fullscreen:     full sensor frame rotated 90deg directly into the DPI
+ *                   frame buffer (zero-copy). The stream task holds the LVGL
+ *                   lock for the whole fullscreen phase, freezing the
+ *                   dashboard; on exit it invalidates the screen so LVGL
+ *                   repaints over the stale camera frame.
+ *
+ * Fullscreen is requested via camera_set_reverse() (gear = REV) or
+ * camera_set_fullscreen_manual() (__CAM_START__/__CAM_STOP__ bench commands);
+ * effective mode = manual OR reverse. The stream task applies mode changes at
+ * frame boundaries, so switches take effect within ~1 frame time.
  *
  * Performance notes (this path is PSRAM-bandwidth bound):
  *   - The whole path is RGB565 (2 B/px): capture, PPA, and the display buffer.
@@ -14,15 +32,12 @@
  *     captures frame N+1 while the PPA scales/rotates frame N, so the per-frame
  *     time is max(capture, scale) instead of their sum.
  *
- * Why full-sensor 1280x960 + PPA instead of zero-copy:
+ * Why full-sensor 1280x960 + PPA instead of zero-copy capture:
  *   The OV5647 is a raw sensor with no scaler — it can only crop + integer-bin.
  *   At an 800-px-wide output it can show at most ~62% of the sensor width, so a
  *   direct 800x1280 sensor mode is permanently "zoomed in". The 1280x960 binning
  *   mode reads ~99% of the array (full field of view), and the ESP32-P4 PPA
  *   scales/rotates that frame down into the 800x1280 display buffer.
- *
- * When streaming, LVGL is blocked via lvgl_port_lock so the camera task has
- * exclusive access to the display frame buffer.
  */
 
 #include "camera.h"
@@ -92,6 +107,16 @@ static const char *TAG = "CAMERA";
 #define CAM_PPA_SCALE_X (1.0f)    /* 16/16 */
 #define CAM_PPA_SCALE_Y (0.8125f) /* 13/16 */
 
+/* ---- PiP knobs ----
+ * CAM_PIP_ROTATION: the PiP buffer goes through LVGL's sw-rotate, which
+ * already turns landscape-logical content to the portrait panel — so no PPA
+ * rotation is needed. If on the bench the PiP appears 180deg off relative to
+ * the fullscreen view, change to PPA_SRM_ROTATION_ANGLE_180.
+ * CAM_PIP_FRAME_DIV: convert every Nth captured frame in PiP mode (the
+ * dashboard shares CPU/PSRAM bandwidth with us; 2 ~= 22 fps). */
+#define CAM_PIP_ROTATION PPA_SRM_ROTATION_ANGLE_0
+#define CAM_PIP_FRAME_DIV 2
+
 /* ---- Auto-exposure tuning (fixes bright-light wash-out) ----
  * The 1280x960 mode runs the sensor's auto-exposure with a fairly bright AE
  * target (driver default 0x50/80) and a maxed-out gain ceiling (0x3ff). In
@@ -124,6 +149,21 @@ static volatile bool s_running = false;
 static TaskHandle_t s_task = NULL;
 static SemaphoreHandle_t s_task_ready = NULL;
 static SemaphoreHandle_t s_task_done = NULL;
+
+/* PiP output target (set once via camera_config_pip before streaming) */
+static void *s_pip_buf = NULL;
+static uint32_t s_pip_w = 0;
+static uint32_t s_pip_h = 0;
+static uint32_t s_pip_blk_h = 0; /* sensor rows used (centered vertical crop) */
+static uint32_t s_pip_off_y = 0; /* first sensor row of the crop */
+static float s_pip_scale = 0.0f; /* n/16, same for x and y (aspect-true) */
+static void (*s_pip_frame_cb)(void) = NULL;
+
+/* Fullscreen requests (written by other tasks) and actual state (written only
+ * by the stream task while it holds / releases the LVGL lock). */
+static volatile bool s_fs_manual = false;
+static volatile bool s_fs_reverse = false;
+static volatile bool s_fs_active = false;
 
 /* ============================================================
  * INTERNAL: XCLK generation via ESP clock router
@@ -182,7 +222,9 @@ static void camera_stream_task(void *arg)
     uint32_t out_w = (uint32_t)(CAM_PPA_SCALE_Y * SENS_V_RES);
     uint32_t off_x = (DISP_H_RES > out_w) ? (DISP_H_RES - out_w) / 2 : 0;
 
-    ppa_srm_oper_config_t srm = {
+    /* Fullscreen op — full sensor frame rotated into the DPI frame buffer
+     * (zero-copy; only issued while we hold the LVGL lock). */
+    ppa_srm_oper_config_t srm_fs = {
         .in = {
             .buffer = NULL, /* set per frame to the current capture buffer */
             .pic_w = SENS_H_RES,
@@ -211,17 +253,46 @@ static void camera_stream_task(void *arg)
         .user_data = s_ppa_done,
     };
 
+    /* PiP op — centered vertical crop scaled into the private PiP buffer,
+     * unrotated (LVGL's sw-rotate orients the widget at flush time). */
+    ppa_srm_oper_config_t srm_pip = {
+        .in = {
+            .buffer = NULL, /* set per frame to the current capture buffer */
+            .pic_w = SENS_H_RES,
+            .pic_h = SENS_V_RES,
+            .block_w = SENS_H_RES,
+            .block_h = s_pip_blk_h,
+            .block_offset_x = 0,
+            .block_offset_y = s_pip_off_y,
+            .srm_cm = PPA_SRM_COLOR_MODE_RGB565,
+        },
+        .out = {
+            .buffer = s_pip_buf,
+            .buffer_size = s_pip_w * s_pip_h * 2,
+            .pic_w = s_pip_w,
+            .pic_h = s_pip_h,
+            .block_offset_x = 0,
+            .block_offset_y = 0,
+            .srm_cm = PPA_SRM_COLOR_MODE_RGB565,
+        },
+        .rotation_angle = CAM_PIP_ROTATION,
+        .scale_x = s_pip_scale,
+        .scale_y = s_pip_scale,
+        .mirror_x = CAM_PPA_MIRROR_X,
+        .mirror_y = CAM_PPA_MIRROR_Y,
+        .mode = PPA_TRANS_MODE_NON_BLOCKING,
+        .user_data = s_ppa_done,
+    };
+
+    /* Without a PiP target the stream is fullscreen for its whole life
+     * (legacy __CAM_START__ behavior). */
+    const bool have_pip = (s_pip_buf != NULL);
+    bool fs_active = false;
+
     esp_cam_ctlr_trans_t trans = {
         .buffer = NULL,
         .buflen = CAP_FB_SIZE,
     };
-
-    lvgl_port_lock(portMAX_DELAY);
-
-    /* Clear to black and flush to PSRAM — PPA only writes the centered image
-     * block, so the side bars must be valid in memory for the DPI scan-out. */
-    memset(disp_fb, 0, DISP_FB_SIZE);
-    esp_cache_msync(disp_fb, DISP_FB_SIZE, ESP_CACHE_MSYNC_FLAG_DIR_C2M);
 
     int stream_on = 1;
     ESP_ERROR_CHECK(esp_cam_sensor_ioctl(s_sensor, ESP_CAM_SENSOR_IOC_S_STREAM, &stream_on));
@@ -229,9 +300,9 @@ static void camera_stream_task(void *arg)
 
     xSemaphoreGive(s_task_ready);
 
-    ESP_LOGI(TAG, "Entering receive loop: cap=%dx%d RGB565 (x%d) -> disp=%dx%d, out_block_w=%u off_x=%u",
+    ESP_LOGI(TAG, "Entering receive loop: cap=%dx%d RGB565 (x%d) -> fs=%dx%d (out_block_w=%u off_x=%u), pip=%ux%u",
              SENS_H_RES, SENS_V_RES, CAP_BUF_COUNT, DISP_H_RES, DISP_V_RES,
-             (unsigned)out_w, (unsigned)off_x);
+             (unsigned)out_w, (unsigned)off_x, (unsigned)s_pip_w, (unsigned)s_pip_h);
 
     /* Prime: capture the first frame into buffer 0. */
     int cur = 0;
@@ -239,8 +310,36 @@ static void camera_stream_task(void *arg)
     esp_err_t ret = esp_cam_ctlr_receive(s_cam_handle, &trans, CAM_RECV_TIMEOUT_MS);
 
     int frame_count = 0;
+    int pip_skip = 0;
     while (s_running)
     {
+        /* Apply fullscreen/PiP switches at frame boundaries only — no PPA op
+         * is ever in flight here. */
+        bool want_fs = !have_pip || s_fs_manual || s_fs_reverse;
+        if (want_fs && !fs_active)
+        {
+            /* Freeze LVGL for the whole fullscreen phase — we own the DPI
+             * frame buffer now. Clear to black and flush to PSRAM: the PPA
+             * only writes the centered image block, so the side bars must be
+             * valid in memory for the DPI scan-out. */
+            lvgl_port_lock(portMAX_DELAY);
+            memset(disp_fb, 0, DISP_FB_SIZE);
+            esp_cache_msync(disp_fb, DISP_FB_SIZE, ESP_CACHE_MSYNC_FLAG_DIR_C2M);
+            fs_active = true;
+            s_fs_active = true;
+            ESP_LOGI(TAG, "Camera fullscreen ON");
+        }
+        else if (!want_fs && fs_active)
+        {
+            /* Hand the frame buffer back: queue a full repaint so LVGL paints
+             * the dashboard over the stale camera frame, then release. */
+            lv_obj_invalidate(lv_screen_active());
+            fs_active = false;
+            s_fs_active = false;
+            lvgl_port_unlock();
+            ESP_LOGI(TAG, "Camera fullscreen OFF - PiP");
+        }
+
         if (ret != ESP_OK)
         {
             /* A timeout just means no frame this interval (or the sensor stalled);
@@ -252,9 +351,18 @@ static void camera_stream_task(void *arg)
             continue;
         }
 
-        /* Kick off the scale/rotate of the just-captured frame (non-blocking). */
-        srm.in.buffer = s_cap_buf[cur];
-        esp_err_t pret = ppa_do_scale_rotate_mirror(s_ppa, &srm);
+        /* Kick off the scale/rotate of the just-captured frame (non-blocking).
+         * Fullscreen converts every frame; PiP only every CAM_PIP_FRAME_DIV-th. */
+        esp_err_t pret = ESP_FAIL;
+        if (fs_active || ++pip_skip >= CAM_PIP_FRAME_DIV)
+        {
+            pip_skip = 0;
+            ppa_srm_oper_config_t *op = fs_active ? &srm_fs : &srm_pip;
+            op->in.buffer = s_cap_buf[cur];
+            pret = ppa_do_scale_rotate_mirror(s_ppa, op);
+            if (pret != ESP_OK)
+                ESP_LOGW(TAG, "PPA SRM failed: err=0x%x (%s)", pret, esp_err_to_name(pret));
+        }
 
         /* Capture the next frame into the other buffer while the PPA runs. */
         int nxt = cur ^ 1;
@@ -265,21 +373,26 @@ static void camera_stream_task(void *arg)
         if (pret == ESP_OK)
         {
             xSemaphoreTake(s_ppa_done, portMAX_DELAY);
-        }
-        else
-        {
-            ESP_LOGW(TAG, "PPA SRM failed: err=0x%x (%s)", pret, esp_err_to_name(pret));
+            /* New PiP frame is in the buffer — ask the UI to repaint it. */
+            if (!fs_active && s_pip_frame_cb)
+                s_pip_frame_cb();
         }
 
         cur = nxt;
         frame_count++;
         if (frame_count <= 5 || frame_count % 300 == 0)
         {
-            ESP_LOGI(TAG, "Frame %d", frame_count);
+            ESP_LOGI(TAG, "Frame %d%s", frame_count, fs_active ? " (fullscreen)" : "");
         }
     }
 
-    lvgl_port_unlock();
+    if (fs_active)
+    {
+        /* Torn down mid-fullscreen: repaint the dashboard and release LVGL. */
+        lv_obj_invalidate(lv_screen_active());
+        s_fs_active = false;
+        lvgl_port_unlock();
+    }
 
     s_task = NULL;
     xSemaphoreGive(s_task_done);
@@ -470,6 +583,58 @@ esp_err_t camera_init(void)
     return ESP_OK;
 }
 
+esp_err_t camera_config_pip(void *buf, uint32_t w, uint32_t h,
+                            void (*frame_cb)(void))
+{
+    if (!buf || !frame_cb || w == 0 || h == 0)
+    {
+        return ESP_ERR_INVALID_ARG;
+    }
+    if (s_running)
+    {
+        ESP_LOGE(TAG, "camera_config_pip must be called before camera_start");
+        return ESP_ERR_INVALID_STATE;
+    }
+    /* PiP always shows the full sensor width; the resulting scale must land
+     * on the PPA's 1/16 grid, so w must be a multiple of 1280/16 = 80. */
+    if ((w * 16) % SENS_H_RES != 0)
+    {
+        ESP_LOGE(TAG, "PiP width %u off the PPA 1/16 scale grid (use a multiple of %d)",
+                 (unsigned)w, SENS_H_RES / 16);
+        return ESP_ERR_INVALID_ARG;
+    }
+    uint32_t n16 = (w * 16) / SENS_H_RES; /* scale numerator (out = in * n16/16) */
+    /* Height selects a centered vertical crop at the same scale — a wide
+     * "rear-view mirror" strip: full horizontal FOV, trimmed sky/foreground. */
+    uint32_t blk_h = (h * 16) / n16;
+    if ((h * 16) % n16 != 0 || blk_h > SENS_V_RES)
+    {
+        ESP_LOGE(TAG, "PiP height %u needs a %u-px sensor crop at scale %u/16 (max %d)",
+                 (unsigned)h, (unsigned)blk_h, (unsigned)n16, SENS_V_RES);
+        return ESP_ERR_INVALID_ARG;
+    }
+    /* PPA DMA needs the output buffer and its byte size cache-line aligned */
+    if (((uintptr_t)buf % 128) != 0 || (w * h * 2) % 128 != 0)
+    {
+        ESP_LOGE(TAG, "PiP buffer %p / size %u not 128-byte aligned",
+                 buf, (unsigned)(w * h * 2));
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    s_pip_buf = buf;
+    s_pip_w = w;
+    s_pip_h = h;
+    s_pip_blk_h = blk_h;
+    s_pip_off_y = (SENS_V_RES - blk_h) / 2;
+    s_pip_scale = (float)n16 / 16.0f;
+    s_pip_frame_cb = frame_cb;
+
+    ESP_LOGI(TAG, "PiP configured: %ux%u @ scale %u/16, sensor crop %dx%u+0+%u",
+             (unsigned)w, (unsigned)h, (unsigned)n16,
+             SENS_H_RES, (unsigned)blk_h, (unsigned)s_pip_off_y);
+    return ESP_OK;
+}
+
 esp_err_t camera_start(esp_lcd_panel_handle_t panel)
 {
     if (s_cam_handle == NULL)
@@ -482,7 +647,8 @@ esp_err_t camera_start(esp_lcd_panel_handle_t panel)
         return ESP_OK;
     }
 
-    ESP_LOGI(TAG, "Starting camera stream");
+    ESP_LOGI(TAG, "Starting camera stream (%s)",
+             s_pip_buf ? "PiP mode" : "fullscreen only");
 
     void *disp_fb = NULL;
     esp_err_t fb_err = esp_lcd_dpi_panel_get_frame_buffer(panel, 1, &disp_fb);
@@ -559,4 +725,19 @@ esp_err_t camera_stop(void)
 bool camera_is_running(void)
 {
     return s_running;
+}
+
+void camera_set_reverse(bool in_reverse)
+{
+    s_fs_reverse = in_reverse;
+}
+
+void camera_set_fullscreen_manual(bool on)
+{
+    s_fs_manual = on;
+}
+
+bool camera_is_fullscreen(void)
+{
+    return s_fs_active;
 }
