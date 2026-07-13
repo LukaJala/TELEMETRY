@@ -41,7 +41,9 @@
       "PowerShell(Get-ChildItem \"C:\\\\Users\\\\Asus M16\\\\esp\\\\v5.5.2\" -ErrorAction SilentlyContinue | Select-Object Name; \"--- export.ps1 search ---\"; Get-ChildItem \"C:\\\\Users\\\\Asus M16\\\\esp\\\\v5.5.2\" -Recurse -Depth 2 -Filter \"export.ps1\" -ErrorAction SilentlyContinue | Select-Object -First 5 FullName)",
       "PowerShell(python -m py_compile \"C:\\\\D-Drive\\\\School\\\\MSU\\\\Solar Car\\\\code\\\\ESP32Stuff\\\\ReceiveTest\\\\pi_relay\\\\relay.py\"; if \\($?\\) { \"relay.py: syntax OK\" } else { \"relay.py: SYNTAX ERROR\" })",
       "PowerShell(Get-NetConnectionProfile *)",
-      "PowerShell(& \"C:\\\\Users\\\\Asus M16\\\\esp\\\\v5.5.2\\\\esp-idf\\\\export.ps1\"; idf.py build)"
+      "PowerShell(& \"C:\\\\Users\\\\Asus M16\\\\esp\\\\v5.5.2\\\\esp-idf\\\\export.ps1\"; idf.py build)",
+      "PowerShell(git -C \"c:\\\\D-Drive\\\\CODE\\\\Solar Car\\\\TELEMETRY\" diff --check)",
+      "PowerShell(git -C \"c:\\\\D-Drive\\\\CODE\\\\Solar Car\\\\TELEMETRY\" grep -nE 'camera_stop|s_reverse_active' -- ReceiveTest/main/main.c)"
     ]
   }
 }

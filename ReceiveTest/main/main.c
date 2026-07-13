@@ -24,6 +24,11 @@ static esp_lcd_panel_handle_t s_panel = NULL;
 /* Decoded CAN state — updated by every incoming CAN frame */
 static display_data_t s_can_data;
 
+/* Reverse latch for the relayed KLS command (~50 Hz) — edge-detected so the
+ * transition is acted on and logged once, not on every frame. Reset on
+ * (dis)connect for a fresh session. */
+static bool s_reverse_active = false;
+
 /* Commands sent from broadcaster.py / sender.py.
  * The backup camera is always live in a PiP window; CAM_START/CAM_STOP force
  * it fullscreen / back to PiP (same effect as shifting in/out of reverse). */
@@ -32,6 +37,16 @@ static display_data_t s_can_data;
 #define CMD_TAB_0 "__TAB_0__"
 #define CMD_TAB_1 "__TAB_1__"
 #define CMD_TAB_2 "__TAB_2__"
+
+/* Reverse / backup-camera trigger.
+ * Vega relays the Kelly KLS motor-controller command frame (CAN id 0x0CF1051E)
+ * over the W5500. Its data byte 2 low two bits encode the commanded drive
+ * direction: 0 = neutral, 1 = forward, 2 = reverse (see Vega app.cpp
+ * klsFrame.data[2] — currently hard-set to 2 for reverse testing). When Vega
+ * commands reverse, the ESP shows the backup camera. */
+#define CAN_ID_KLS_COMMAND 0x0CF1051EUL
+#define KLS_DIR_MASK 0x03
+#define KLS_DIR_REVERSE 0x02
 
 /* Size of a binary CAN-over-TCP frame: [0x01 magic][CAN_ID 4B][DLC 1B][data 8B] */
 #define CAN_FRAME_SIZE 14
@@ -48,8 +63,9 @@ static void on_client_connected(void)
     ESP_LOGI(TAG, "Client connected");
     /* Begin every session from a known state: camera in PiP unless the new
      * data source says otherwise (reverse gear re-engages fullscreen within
-     * one frame of the first Vega_DriverInputs message). */
+     * one frame of the first reverse-indicating message). */
     camera_set_fullscreen_manual(false);
+    s_reverse_active = false; /* clear the reverse latch for a fresh session */
     ui_set_status("Connected");
 }
 
@@ -66,6 +82,7 @@ static void on_client_disconnected(void)
      * any fullscreen back to PiP. The camera itself keeps running. */
     camera_set_fullscreen_manual(false);
     camera_set_reverse(false);
+    s_reverse_active = false; /* clear the reverse latch; next session re-detects */
 
     /* Wait (bounded) for the stream task to actually leave fullscreen and
      * release the LVGL lock — otherwise the zero-out below can't paint and
@@ -149,6 +166,24 @@ static void on_data_received(const uint8_t *data, int length)
     const uint8_t *payload = &data[6];
 
     display_route_frame(&s_can_data, can_id, payload);
+
+    /* Backup camera: Vega's relayed KLS command (0x0CF1051E) carries the drive
+     * direction in byte 2. Entering reverse puts the (always-running) camera
+     * fullscreen; leaving reverse returns it to PiP and the stream task
+     * repaints the dashboard. Edge-detected so it fires once per transition,
+     * not on every 20 ms KLS frame. */
+    if (can_id == CAN_ID_KLS_COMMAND)
+    {
+        bool reverse = (payload[2] & KLS_DIR_MASK) == KLS_DIR_REVERSE;
+        if (reverse != s_reverse_active)
+        {
+            s_reverse_active = reverse;
+            ESP_LOGI(TAG, "Vega %s reverse — camera %s",
+                     reverse ? "commanded" : "left",
+                     reverse ? "fullscreen" : "back to PiP");
+            camera_set_reverse(reverse);
+        }
+    }
 
     ESP_LOGD(TAG, "CAN frame 0x%08lX decoded (flags=0x%lX)",
              (unsigned long)can_id, (unsigned long)s_can_data.update_flags);
