@@ -112,10 +112,11 @@ static const char *TAG = "CAMERA";
  * already turns landscape-logical content to the portrait panel — so no PPA
  * rotation is needed. If on the bench the PiP appears 180deg off relative to
  * the fullscreen view, change to PPA_SRM_ROTATION_ANGLE_180.
- * CAM_PIP_FRAME_DIV: convert every Nth captured frame in PiP mode (the
- * dashboard shares CPU/PSRAM bandwidth with us; 2 ~= 22 fps). */
+ * CAM_PIP_FRAME_DIV: convert every Nth captured frame in PiP mode. 1 = full
+ * sensor rate (~45 fps); raise to 2 (~22 fps) if the dashboard gets sluggish
+ * (each step costs the PPA ~40 MB/s of PSRAM read bandwidth). */
 #define CAM_PIP_ROTATION PPA_SRM_ROTATION_ANGLE_0
-#define CAM_PIP_FRAME_DIV 2
+#define CAM_PIP_FRAME_DIV 1
 
 /* ---- Auto-exposure tuning (fixes bright-light wash-out) ----
  * The 1280x960 mode runs the sensor's auto-exposure with a fairly bright AE

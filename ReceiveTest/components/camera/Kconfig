@@ -1,0 +1,63 @@
+menu "Backup camera"
+
+    choice CAMERA_BACKEND
+        prompt "Camera backend"
+        default CAMERA_BACKEND_CSI
+        help
+            Selects which physical camera the backup-camera component drives.
+            Both backends implement the same camera.h API, so main.c is
+            identical either way — only one .c file is compiled.
+
+        config CAMERA_BACKEND_CSI
+            bool "MIPI-CSI sensor (OV5647 / IMX219)"
+            help
+                The on-board Waveshare CSI camera. Lowest latency, shortest
+                cable reach (~15-30 cm FPC ribbon). This is the proven,
+                default path (camera_csi.c).
+
+        config CAMERA_BACKEND_UVC
+            bool "USB UVC webcam (e.g. Logitech C920)"
+            help
+                A USB Video Class webcam on the ESP32-P4 High-Speed USB OTG
+                port. MJPEG is decoded by the P4 hardware JPEG engine. Longer
+                cable reach, standard/replaceable optics; higher latency and
+                needs the host port to supply VBUS (~500 mA for a C920).
+                Implemented in camera_uvc.c.
+    endchoice
+
+    if CAMERA_BACKEND_UVC
+
+        config CAMERA_UVC_H_RES
+            int "UVC frame width (px)"
+            default 1280
+            help
+                Must be a resolution the webcam advertises for MJPEG. 1280 keeps
+                the existing 480-wide PiP on the PPA's 1/16 scaling grid
+                (1280/16 = 80; the PiP width 480 = 6/16 of it).
+
+        config CAMERA_UVC_V_RES
+            int "UVC frame height (px)"
+            default 720
+
+        config CAMERA_UVC_FPS
+            int "UVC frame rate (fps)"
+            default 30
+
+        config CAMERA_UVC_VID
+            hex "USB Vendor ID to match (0 = first UVC device found)"
+            default 0x0
+            help
+                Logitech is 0x046d. Leave 0 to bind to whatever UVC camera
+                enumerates first. Read the real VID/PID from the boot log the
+                first time the camera is plugged in.
+
+        config CAMERA_UVC_PID
+            hex "USB Product ID to match (0 = any)"
+            default 0x0
+            help
+                C920 family PIDs are around 0x082d / 0x08e5 — confirm from the
+                enumeration log rather than trusting the asset tag on the case.
+
+    endif
+
+endmenu

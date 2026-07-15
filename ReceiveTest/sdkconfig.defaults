@@ -26,6 +26,9 @@ CONFIG_LV_FONT_MONTSERRAT_24=y
 CONFIG_LV_FONT_MONTSERRAT_32=y
 CONFIG_LV_FONT_MONTSERRAT_48=y
 
+# LVGL refresh at 60Hz (default 33ms = 30Hz caps the camera PiP frame rate)
+CONFIG_LV_DEF_REFR_PERIOD=16
+
 # Flash size
 CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y
 CONFIG_ESPTOOLPY_FLASHSIZE="16MB"
@@ -42,7 +45,9 @@ CONFIG_CAMERA_OV5647=y
 # Full-sensor 1280x960 RAW10 2x2-binning mode (wide FOV; scaled to display via PPA)
 CONFIG_CAMERA_OV5647_MIPI_RAW10_1280X960_BINNING_45FPS=y
 
-# DMA2D: keep ISR and operation funcs in IRAM to prevent stalls
-# during DSI pixel transfers (eliminates flash cache miss latency)
+# DMA2D: keep operation funcs in IRAM to prevent stalls during DSI pixel
+# transfers (eliminates flash cache miss latency). ISR_IRAM_SAFE must stay
+# OFF: LVGL's on_job_picked callback is not in IRAM and enabling it crashes
+# rendering (see CLAUDE.md).
 CONFIG_DMA2D_OPERATION_FUNC_IN_IRAM=y
-CONFIG_DMA2D_ISR_IRAM_SAFE=y
+CONFIG_DMA2D_ISR_IRAM_SAFE=n

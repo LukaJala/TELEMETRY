@@ -59,7 +59,7 @@ dependencies:
       type: service
     version: 0.0.8
   espressif/i2c_bus:
-    component_hash: 804ec068d163570fd367b279a310ca383484630d2310c586b50def0bcf21de13
+    component_hash: 483112c1619c54c38d0b734fb25f1678733267858a77b7af2f48cc7db6dbbd84
     dependencies:
     - name: espressif/cmake_utilities
       registry_url: https://components.espressif.com
@@ -71,7 +71,31 @@ dependencies:
     source:
       registry_url: https://components.espressif.com
       type: service
-    version: 1.5.1
+    version: 1.5.2
+  espressif/usb_host_uvc:
+    component_hash: 3dde9c89980212de1e394a29d3fe782a2988a08fd2a16af34eee6f642aab6ebe
+    dependencies:
+    - name: idf
+      require: private
+      version: '>=5.0'
+    - name: espressif/usb
+      registry_url: https://components.espressif.com
+      require: public
+      rules:
+      - if: idf_version >=6.0
+      - if: target not in ["linux"]
+      version: ^1.0.0
+    source:
+      registry_url: https://components.espressif.com/
+      type: service
+    targets:
+    - esp32s2
+    - esp32s3
+    - esp32p4
+    - esp32h4
+    - esp32s31
+    - linux
+    version: 2.5.1
   idf:
     source:
       type: idf
@@ -106,9 +130,10 @@ dependencies:
 direct_dependencies:
 - espressif/esp_cam_sensor
 - espressif/esp_lvgl_port
+- espressif/usb_host_uvc
 - idf
 - lvgl/lvgl
 - waveshare/esp_lcd_jd9365_10_1
-manifest_hash: 0fd67569c8f43da254c12d03eafda2b5290ff0063108e09606fd31141aef3c85
+manifest_hash: 5d9086c31d1f6a50e0023e4d27d9e3d8b72f02693bb9d5a86f390d6ef8486165
 target: esp32p4
 version: 2.0.0

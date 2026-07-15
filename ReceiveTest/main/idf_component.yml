@@ -5,3 +5,6 @@ dependencies:
   lvgl/lvgl: "~9.2.0"
   espressif/esp_lvgl_port: "^2"
   espressif/esp_cam_sensor: "*"
+  # USB UVC webcam backend (CONFIG_CAMERA_BACKEND_UVC). Fetched unconditionally
+  # by the component manager; only compiled when the UVC backend is selected.
+  espressif/usb_host_uvc: "^2"

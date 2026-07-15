@@ -9,7 +9,7 @@
  *   BATTERY    — pack V/A/kW, cell extremes, temps, SOH, cell range bar,
  *                balancing, energy, adaptive energy
  *   SOLAR/MOTOR — total solar, 4 MPPT bars, motor RPM/A, temps, net power
- *   GPS/TRIP   — speed, heading, altitude, sats, odo, UTC, lat/lon
+ *   GPS        — speed, heading, altitude, sats, odo, UTC, lat/lon
  *
  * FAULT OVERLAY: covers right panel only, red bg, non-dismissable
  *
@@ -114,7 +114,7 @@ static lv_obj_t *lbl_24v = NULL;
 static lv_obj_t *warn_strip = NULL;
 static lv_obj_t *status_label = NULL;
 
-/* Pi telemetry-link indicator (bottom-left corner) */
+/* Radio telemetry-link indicator (bottom-left corner) */
 static lv_obj_t *dot_pi = NULL;
 static lv_obj_t *lbl_pi = NULL;
 
@@ -191,6 +191,7 @@ static lv_obj_t *lbl_fault_thr = NULL;
 static lv_obj_t *cam_pip_frame = NULL;  /* border frame (position/show/hide) */
 static lv_obj_t *cam_pip_canvas = NULL; /* canvas bound to cam_pip_buf */
 static void *cam_pip_buf = NULL;        /* RGB565, PPA-written, PSRAM */
+static volatile bool cam_pip_pending = false; /* camera task -> pip timer */
 
 /* =========================================================================
  * Fault subtitles (matched to BPS_FAULT_NAMES index)
@@ -289,7 +290,7 @@ static lv_obj_t *tab_val(lv_obj_t *parent, const char *cap, const char *init,
                          int x, int y)
 {
     make_lbl(parent, cap, C_GRAY, &lv_font_montserrat_14, x, y);
-    return make_lbl(parent, init, C_WHITE, &lv_font_montserrat_24, x, y + 18);
+    return make_lbl(parent, init, C_WHITE, &lv_font_montserrat_32, x, y + 18);
 }
 
 /* =========================================================================
@@ -485,16 +486,16 @@ static void build_left_panel(lv_obj_t *scr)
     lv_obj_set_style_text_font(warn_lbl, &lv_font_montserrat_24, LV_PART_MAIN);
     lv_obj_align(warn_lbl, LV_ALIGN_CENTER, 0, 0);
 
-    /* ── Pi telemetry-link indicator (bottom-left corner) ──────────────────
+    /* ── Radio telemetry-link indicator (bottom-left corner) ───────────────
      * Created last so it sits on top of the warn strip on the rare occasions
      * that overlaps. Dark chip keeps it readable over any background. Starts in
      * the disconnected state; main.c polls network_pi_is_connected() to update. */
     {
-        lv_obj_t *pi_chip = make_panel(lp, LP_PAD, SCR_H - 30, 158, 26, C_TILE);
+        lv_obj_t *pi_chip = make_panel(lp, LP_PAD, SCR_H - 130, 158, 26, C_TILE);
         lv_obj_set_style_radius(pi_chip, 6, LV_PART_MAIN);
         dot_pi = make_dot(pi_chip, 7, 6, C_RED, 14);
         lbl_pi = lv_label_create(pi_chip);
-        lv_label_set_text(lbl_pi, "PI OFFLINE");
+        lv_label_set_text(lbl_pi, "RADIO OFFLINE");
         lv_obj_set_style_text_color(lbl_pi, C_GRAY, LV_PART_MAIN);
         lv_obj_set_style_text_font(lbl_pi, &lv_font_montserrat_14, LV_PART_MAIN);
         lv_obj_set_pos(lbl_pi, 28, 5);
@@ -544,7 +545,7 @@ static void build_right_panel(lv_obj_t *scr)
 
     lv_obj_t *t_batt = lv_tabview_add_tab(tv, "BATTERY");
     lv_obj_t *t_solar = lv_tabview_add_tab(tv, "SOLAR / MOTOR");
-    lv_obj_t *t_gps = lv_tabview_add_tab(tv, "GPS / TRIP");
+    lv_obj_t *t_gps = lv_tabview_add_tab(tv, "GPS");
 
     /* ---- Content page background and no-scroll ---- */
     lv_color_t tabs[] = {C_BG, C_BG, C_BG};
@@ -658,31 +659,31 @@ static void build_right_panel(lv_obj_t *scr)
         lv_obj_set_style_radius(bar_mppt[i], 3, LV_PART_MAIN);
         lv_obj_set_style_radius(bar_mppt[i], 3, LV_PART_INDICATOR);
         lv_obj_set_pos(bar_mppt[i], sol_col_l + 18, my + 2);
-        lbl_mppt_w[i] = make_lbl(t_solar, "-- W", C_WHITE, &lv_font_montserrat_14,
+        lbl_mppt_w[i] = make_lbl(t_solar, "-- W", C_WHITE, &lv_font_montserrat_24,
                                  sol_col_l + 18 + MPPT_BAR_W + 6, my + 2);
     }
 
     /* Motor side */
     make_lbl(t_solar, "MOTOR RPM", C_GRAY, &lv_font_montserrat_14, sol_col_r, 12);
     make_lbl(t_solar, "MOTOR CURRENT", C_GRAY, &lv_font_montserrat_14, sol_col_r + 200, 12);
-    lbl_sol_rpm = make_lbl(t_solar, "----", C_WHITE, &lv_font_montserrat_32, sol_col_r, 30);
-    lbl_sol_motor_a = make_lbl(t_solar, "--.- A", C_WHITE, &lv_font_montserrat_32, sol_col_r + 200, 30);
+    lbl_sol_rpm = make_lbl(t_solar, "----", C_WHITE, &lv_font_montserrat_48, sol_col_r, 30);
+    lbl_sol_motor_a = make_lbl(t_solar, "--.- A", C_WHITE, &lv_font_montserrat_48, sol_col_r + 200, 30);
 
     make_lbl(t_solar, "CTRL TEMP", C_GRAY, &lv_font_montserrat_14, sol_col_r, 110);
     make_lbl(t_solar, "MOTOR TEMP", C_GRAY, &lv_font_montserrat_14, sol_col_r + 200, 110);
     lbl_sol_ctrl_temp = make_lbl(t_solar, "--\xc2\xb0"
                                           "C",
-                                 C_WHITE, &lv_font_montserrat_32, sol_col_r, 128);
+                                 C_WHITE, &lv_font_montserrat_48, sol_col_r, 128);
     lbl_sol_motor_temp = make_lbl(t_solar, "--\xc2\xb0"
                                            "C",
-                                  C_WHITE, &lv_font_montserrat_32, sol_col_r + 200, 128);
+                                  C_WHITE, &lv_font_montserrat_48, sol_col_r + 200, 128);
 
     make_lbl(t_solar, "NET POWER", C_GRAY, &lv_font_montserrat_14, sol_col_r, 195);
     lbl_net_power = make_lbl(t_solar, "Solar -- W\nMotor -- W\n= -- W",
-                             C_WHITE, &lv_font_montserrat_24, sol_col_r, 214);
+                             C_WHITE, &lv_font_montserrat_32, sol_col_r, 214);
 
     /* ==========================================================
-     * GPS / TRIP TAB
+     * GPS TAB
      * ========================================================== */
     int g_col_l = 20, g_col_r = 460;
 
@@ -697,8 +698,8 @@ static void build_right_panel(lv_obj_t *scr)
 
     make_lbl(t_gps, "LATITUDE", C_GRAY, &lv_font_montserrat_14, g_col_l, 198);
     make_lbl(t_gps, "LONGITUDE", C_GRAY, &lv_font_montserrat_14, g_col_r, 198);
-    lbl_gps_lat = make_lbl(t_gps, "---.----\xc2\xb0 N/S", C_WHITE, &lv_font_montserrat_24, g_col_l, 216);
-    lbl_gps_lon = make_lbl(t_gps, "---.----\xc2\xb0 E/W", C_WHITE, &lv_font_montserrat_24, g_col_r, 216);
+    lbl_gps_lat = make_lbl(t_gps, "---.----\xc2\xb0 N/S", C_WHITE, &lv_font_montserrat_32, g_col_l, 216);
+    lbl_gps_lon = make_lbl(t_gps, "---.----\xc2\xb0 E/W", C_WHITE, &lv_font_montserrat_32, g_col_r, 216);
 }
 
 /* =========================================================================
@@ -779,6 +780,19 @@ static void build_fault_overlay(lv_obj_t *scr)
  * every tab and the fault overlay (the backup camera must always be visible;
  * in reverse the camera goes fullscreen and covers everything anyway).
  * ========================================================================= */
+/* Runs in LVGL context: turn a pending camera frame into a canvas repaint.
+ * The camera task only raises cam_pip_pending — it never touches the LVGL
+ * lock, so a render in progress can't stall the capture loop. */
+static void cam_pip_timer_cb(lv_timer_t *t)
+{
+    (void)t;
+    if (cam_pip_pending)
+    {
+        cam_pip_pending = false;
+        lv_obj_invalidate(cam_pip_canvas);
+    }
+}
+
 static void build_cam_pip(lv_obj_t *scr)
 {
     /* PPA DMA target: 128-byte aligned, size is a multiple of 128 (480*240*2) */
@@ -802,6 +816,11 @@ static void build_cam_pip(lv_obj_t *scr)
     lv_canvas_set_buffer(cam_pip_canvas, cam_pip_buf, CAM_PIP_W, CAM_PIP_H,
                          LV_COLOR_FORMAT_RGB565);
     lv_obj_set_pos(cam_pip_canvas, CAM_PIP_BORDER, CAM_PIP_BORDER);
+
+    /* Repaint pump for the camera feed. 8 ms (half the refresh period) so a
+     * ready frame never waits a full extra refresh cycle; the callback is a
+     * flag check, so idle cost is negligible. */
+    lv_timer_create(cam_pip_timer_cb, 8, NULL);
 }
 
 /* =========================================================================
@@ -888,14 +907,12 @@ void *ui_cam_pip_buffer(uint32_t *w, uint32_t *h)
 
 void ui_cam_pip_frame_ready(void)
 {
-    if (!cam_pip_canvas)
-        return;
-    /* Short bounded wait: if LVGL is mid-render just drop this repaint — the
-     * buffer already holds the newest frame and the next callback retries. */
-    if (!lvgl_port_lock(10))
-        return;
-    lv_obj_invalidate(cam_pip_canvas);
-    lvgl_port_unlock();
+    /* Called from the camera stream task at up to sensor rate, at the one
+     * moment no capture is queued — so it must never block. Even a bounded
+     * lvgl_port_lock() here can make the task miss the next frame boundary.
+     * Just flag the frame; cam_pip_timer_cb (LVGL context) does the
+     * invalidate within 8 ms. */
+    cam_pip_pending = true;
 }
 
 void ui_cam_pip_set_active(bool active)
@@ -926,7 +943,7 @@ void ui_set_pi_status(bool connected)
         return;
 
     dot_set(dot_pi, connected ? C_GREEN : C_RED);
-    lv_label_set_text(lbl_pi, connected ? "PI ONLINE" : "PI OFFLINE");
+    lv_label_set_text(lbl_pi, connected ? "RADIO ONLINE" : "RADIO OFFLINE");
     lv_obj_set_style_text_color(lbl_pi, connected ? C_GREEN : C_GRAY, LV_PART_MAIN);
 
     shown_state = (int)connected;

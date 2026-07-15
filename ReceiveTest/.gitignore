@@ -10,3 +10,6 @@ sdkconfig.old
 # Editor / IDE
 .vscode/settings.json
 *.swp
+
+# Claude Code local settings
+.claude/
