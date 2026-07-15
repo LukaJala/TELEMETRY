@@ -3,5 +3,6 @@
 		"board/esp32p4-builtin.cfg"
 	],
 	"idf.portWin": "COM7",
-	"cmake.sourceDirectory": "C:/Users/ishan/TELEMETRY/FIRST_TEST"
+	"cmake.sourceDirectory": "C:/Users/ishan/TELEMETRY/FIRST_TEST",
+	"idf.currentSetup": "C:\\Users\\Asus M16\\esp\\v5.5.2\\esp-idf"
 }
